@@ -48,11 +48,24 @@ class MetaModel():
                                 Fourier_features,
                                 seed, verbose, N_FF,
                                 sigma_FF_sigma, optim_freq=optim_freq)
+        
+
+        #PINN pour E
+
+        layers_E = [32,32]
+        activation_E = nn.Linear()
+
+        self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
+                            Fourier_features,
+                            seed, verbose, N_FF,
+                            sigma_FF=1, optim_freq=optim_freq)
 
         self.E_ref = E_ref
         self.E = E_0.float().to(self.device)/self.E_ref     # Transférer E_0 au GPU
         self.E_0 = E_0.detach().clone().to(self.device)       # Transférer E_0 au GPU
         self.E.requires_grad = True
+        """
+        FEM initialisation
 
         # Verify the consistency of dimension
         assert (n_E[0]+1)*(n_E[1]+1) == self.E.shape[0]
@@ -65,7 +78,7 @@ class MetaModel():
             self.E_solution = Efunc(torch.from_numpy(self.mesh_E.nodes))
 
         self.iter_LFBGS_altern = iter_LFBGS_altern
-
+        """
         # Lists initialization
         self.list_J_train = []
         self.list_J_test = []
@@ -343,7 +356,7 @@ class MetaModel():
 
         for self.alter_step in range(alter_steps):
             print('ITERATION n°%d' % self.alter_step)
-            # Minimizing on E
+            # Minimizing on E : probablement FEM optim, à remplacer par pt fixe ?
             self.lambdas = lambdas_identif_E
 
             optimizer = torch.optim.Adam([self.E])
