@@ -4,6 +4,7 @@ import numpy as np
 import package.display as display
 import package.Mechanics_model as Mechanics_model
 from package.Class_PINN import PINN
+from package.Class_model_E import model_E
 
 from copy import deepcopy
 
@@ -50,16 +51,16 @@ class MetaModel():
                                 sigma_FF_sigma, optim_freq=optim_freq)
         
 
-        #PINN pour E
-
-        layers_E = [32,32]
-        activation_E = nn.Linear()
+        #NN pour E
+        
+        layers_E = [256,256]
+        activation_E = nn.ReLU()
 
         self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
                             Fourier_features,
                             seed, verbose, N_FF,
                             sigma_FF=1, optim_freq=optim_freq)
-
+        
         self.E_ref = E_ref
         self.E = E_0.float().to(self.device)/self.E_ref     # Transférer E_0 au GPU
         self.E_0 = E_0.detach().clone().to(self.device)       # Transférer E_0 au GPU
@@ -166,12 +167,16 @@ class MetaModel():
     def save_model(self, model, path):
         if model == 'sigma':
             torch.save(self.model_sigma, path)
+        elif model == 'E':
+            torch.save(self.model_E,path)
         else:
             torch.save(self.model_u, path)
 
     def load_model(self, model, path):
         if model == 'sigma':
             self.model_sigma = torch.load(path)
+        elif model == 'E':
+            torch.load(self.model_E,path)
         else:
             self.model_u = torch.load(path)
 
@@ -247,7 +252,38 @@ class MetaModel():
             if self.verbose == 1:
                 print("Epoch: ", epoch+1, "/", pre_train_iter,
                       " Loss: ", self.J_train.item())
+                
+    def pretrain_E(self, inputs, dic_model, pre_train_iter=100):
+        ''' 
+        Supervised learning for E
+        '''
+        self.lambdas = lambdas={'res_u': 1, 'obs_F': 1}
 
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs_F'] == np.inf:
+            self.normalized_losses['obs_F'] = Mechanics_model.J_obs(
+                self, dic_model).detach().clone()
+
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                    Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0.))
+
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
+
+        for epoch in range(pre_train_iter):
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                      " Loss: ", self.J_train.item())
+
+    """
     def regularize_E(self, inputs, obs, pre_train_iter, lambdas={'res_u': 1, 'obs_F': 1}):
         ''' Regulazition of the estimation of E based on Physics laws '''
         optimizer = torch.optim.LBFGS([self.E],
@@ -257,6 +293,7 @@ class MetaModel():
                                       line_search_fn="strong_wolfe",
                                       tolerance_grad=-1,
                                       tolerance_change=-1)
+        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=1e-3)
         self.optim = 'LBFGS'
 
         def closure():
@@ -271,6 +308,7 @@ class MetaModel():
                 # print('E clamped')
             return J_train
         optimizer.step(closure)
+    """
 
     def train_model(self, inputs, dic_model, alter_steps=10,
                     alter_freq=(50, 50, 50),
@@ -357,6 +395,8 @@ class MetaModel():
         for self.alter_step in range(alter_steps):
             print('ITERATION n°%d' % self.alter_step)
             # Minimizing on E : probablement FEM optim, à remplacer par pt fixe ?
+
+            """
             self.lambdas = lambdas_identif_E
 
             optimizer = torch.optim.Adam([self.E])
@@ -376,6 +416,7 @@ class MetaModel():
                                           tolerance_change=-1)
             self.optim = 'LBFGS'
             self.gradient_descent(J_identif_E, optimizer, inputs)
+            """
 
             # display.display_E(self, inputs)
             print("Saving E ")
