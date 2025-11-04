@@ -257,13 +257,13 @@ class MetaModel():
         ''' 
         Supervised learning for E
         '''
-        self.lambdas = lambdas={'res_u': 1, 'obs_F': 1}
+        self.lambdas = {'obs_F': 1}
 
         # Normalization of losses if not already done
         if self.normalized_losses['obs_F'] == np.inf:
-            self.normalized_losses['obs_F'] = Mechanics_model.J_obs(
+            self.normalized_losses['obs_F'] = Mechanics_model.J_obs_F(
                 self, dic_model).detach().clone()
-
+            
         def J(metamodel, domain, inputs, dic_model):
             return (torch.tensor(0),
                     metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
@@ -395,6 +395,27 @@ class MetaModel():
         for self.alter_step in range(alter_steps):
             print('ITERATION n°%d' % self.alter_step)
             # Minimizing on E : probablement FEM optim, à remplacer par pt fixe ?
+
+            self.lambdas = lambdas_identif_E
+
+            optimizer = torch.optim.Adam(self.model_E.parameters())
+            self.optim = 'Adam'
+
+            for epoch in range(alter_freq[0]//2):
+                self.gradient_descent(J_identif_E, optimizer, inputs)
+                print("Epoch: ", epoch+1, "/",
+                      alter_freq[0]//2, " Loss: ", self.J_train.item())
+
+            optimizer = torch.optim.LBFGS(self.model_E.parameters(),
+                                          lr=1,
+                                          max_iter=alter_freq[0]//2 - 1,
+                                          max_eval=10*alter_freq[0]//2,
+                                          line_search_fn="strong_wolfe",
+                                          tolerance_grad=-1,
+                                          tolerance_change=-1)
+            self.optim = 'LBFGS'
+            self.gradient_descent(J_identif_E, optimizer, inputs)
+
 
             """
             self.lambdas = lambdas_identif_E
