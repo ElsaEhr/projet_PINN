@@ -4,7 +4,7 @@ import numpy as np
 import package.display as display
 import package.Mechanics_model as Mechanics_model
 from package.Class_PINN import PINN
-from package.Class_model_E import model_E
+#from package.Class_model_E import model_E
 
 from copy import deepcopy
 
@@ -257,7 +257,8 @@ class MetaModel():
         ''' 
         Supervised learning for E
         '''
-        self.lambdas = {'obs_F': 1}
+        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0, 'tikhonov': 0}
 
         # Normalization of losses if not already done
         if self.normalized_losses['obs_F'] == np.inf:
@@ -282,33 +283,6 @@ class MetaModel():
             if self.verbose == 1:
                 print("Epoch: ", epoch+1, "/", pre_train_iter,
                       " Loss: ", self.J_train.item())
-
-    """
-    def regularize_E(self, inputs, obs, pre_train_iter, lambdas={'res_u': 1, 'obs_F': 1}):
-        ''' Regulazition of the estimation of E based on Physics laws '''
-        optimizer = torch.optim.LBFGS([self.E],
-                                      lr=1,
-                                      max_iter=pre_train_iter,
-                                      max_eval=10*pre_train_iter,
-                                      line_search_fn="strong_wolfe",
-                                      tolerance_grad=-1,
-                                      tolerance_change=-1)
-        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=1e-3)
-        self.optim = 'LBFGS'
-
-        def closure():
-            optimizer.zero_grad()
-
-            J_train = lambdas['obs_F'] * Mechanics_model.J_obs_F(self, inputs)
-            J_train.backward(retain_graph=True)
-
-            # Simple constraint to keep the physical parameter box-constrained
-            with torch.no_grad():
-                self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
-                # print('E clamped')
-            return J_train
-        optimizer.step(closure)
-    """
 
     def train_model(self, inputs, dic_model, alter_steps=10,
                     alter_freq=(50, 50, 50),
