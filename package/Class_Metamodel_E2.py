@@ -59,12 +59,23 @@ class MetaModel():
                                 sigma_FF_sigma, optim_freq=optim_freq)
 
 
+                #NN pour E
+        
+        layers_E = [256,256]
+        activation_E = nn.ReLU()
+
+        self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
+                            Fourier_features,
+                            seed, verbose, N_FF,
+                            sigma_FF=1, optim_freq=optim_freq)
+
         self.E_ref = E_ref
         self.E = E_0.float().to(self.device)/self.E_ref     # Transférer E_0 au GPU
         self.E_0 = E_0.detach().clone().to(self.device)       # Transférer E_0 au GPU
         self.E.requires_grad = True
 
-
+        """
+        FEM initialisation
         # Verify the consistency of dimension
         assert (n_E[0]+1)*(n_E[1]+1) == self.E.shape[0]
         # Create the mesh for the interpolation for E
@@ -77,7 +88,7 @@ class MetaModel():
 
 
         self.iter_LFBGS_altern = iter_LFBGS_altern
-
+        """
 
         # Lists initialization
         self.list_J_train = []
@@ -237,6 +248,39 @@ class MetaModel():
             if self.verbose == 1:
                 print("Epoch: ", epoch+1, "/", pre_train_iter,
                       " Loss: ", self.J_train.item())
+                
+
+
+        def pretrain_E(self, inputs, dic_model, pre_train_iter=100):
+            ''' 
+            Supervised learning for E
+            '''
+            self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                            'BC': 0, 'lines': 0, 'constitutive': 0, 'tikhonov': 0}
+
+            # Normalization of losses if not already done
+            if self.normalized_losses['obs_F'] == np.inf:
+                self.normalized_losses['obs_F'] = Mechanics_model.J_obs_F(
+                    self, dic_model).detach().clone()
+                
+            def J(metamodel, domain, inputs, dic_model):
+                return (torch.tensor(0),
+                        metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                        Mechanics_model.J_obs(metamodel, dic_model),
+                        torch.tensor(0),
+                        torch.tensor(0),
+                        torch.tensor(0),
+                        torch.tensor(0),
+                        torch.tensor(0.))
+
+            optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+            self.optim = 'Adam'
+
+            for epoch in range(pre_train_iter):
+                self.gradient_descent_u(J, optimizer, inputs, dic_model)
+                if self.verbose == 1:
+                    print("Epoch: ", epoch+1, "/", pre_train_iter,
+                        " Loss: ", self.J_train.item())
 
 
     def train_model(self, inputs, dic_model, alter_steps=10,

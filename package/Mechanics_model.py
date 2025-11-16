@@ -1,8 +1,10 @@
 # %% Library imports
 
+
 import torch
 import numpy as np
 from package.Class_Mesh import Mesh
+
 
 # %% Physical constants
 F = torch.tensor([50.])  # traction effort in MPa
@@ -10,7 +12,10 @@ stdF = 0.  # standard deviation of the added gaussian noise on F
 Fobs = F + stdF*torch.randn(1)  # F avec le bruit
 nu = 0.3  # Poisson ratio
 
+
 # %% Helper functions
+
+
 
 
 def create_mesh_E(inputs, n_E):
@@ -26,13 +31,16 @@ def create_mesh_E(inputs, n_E):
     def from_global_2_local(N, n_x, n_y): return (
         N // n_y, N % n_y)  # convert a k-index to (i,j)
 
+
     def from_local_2_global(i, j, n_x, n_y): return i * \
         n_y + j           # convert (i,j) to k-index
+
 
     nodes_x = np.linspace(inputs.x_variable_min,
                           inputs.x_variable_max, n_E[0]+1)
     nodes_y = np.linspace(inputs.y_variable_min,
                           inputs.y_variable_max, n_E[1]+1)
+
 
     # attribute of Mesh class which stores the coordinates of nodes
     nodes = np.zeros(((n_E[0]+1)*(n_E[1]+1), 2))
@@ -40,6 +48,7 @@ def create_mesh_E(inputs, n_E):
         index_x, index_y = from_global_2_local(index_nodes, n_E[0]+1, n_E[1]+1)
         nodes[index_nodes, 0] = nodes_x[index_x]
         nodes[index_nodes, 1] = nodes_y[index_y]
+
 
     # attribute of Mesh class which connect each element to their corresponding
     connectivity_table = np.zeros((n_E[0]*n_E[1], 4), dtype=int)
@@ -55,8 +64,11 @@ def create_mesh_E(inputs, n_E):
         connectivity_table[index_elt, 3] = from_local_2_global(
             index_row+1, index_col, n_E[0]+1, n_E[1]+1)
 
+
     return Mesh(nb_nodes=nodes.shape[0], nb_elt=connectivity_table.shape[0], dim=2, elementType='Q4',
                 nodes=nodes, connectivity_table=connectivity_table)
+
+
 
 
 def E_function(x, k, metamodel, inputs):
@@ -65,24 +77,31 @@ def E_function(x, k, metamodel, inputs):
     """
     if (metamodel.E_interpolation == 'P1'):
 
+
         # Shape functions for Q4 centered in (0,0) with dimension dx*dy
         def N0(x, dx=1, dy=1):
             return 1/(dx*dy)*(dx/2 - x[:, 0])*(dy/2 - x[:, 1])
 
+
         def N1(x, dx=1, dy=1):
             return 1/(dx*dy)*(dx/2 - x[:, 0])*(dy/2 + x[:, 1])
+
 
         def N2(x, dx=1, dy=1):
             return 1/(dx*dy)*(dx/2 + x[:, 0])*(dy/2 + x[:, 1])
 
+
         def N3(x, dx=1, dy=1):
             return 1/(dx*dy)*(dx/2 + x[:, 0])*(dy/2 - x[:, 1])
+
 
         def condition(x):
             return torch.sum(x < 0).item() == 0
 
+
         if (k.numel() == 1):
             return k*torch.tensor([1.])
+
 
         else:
             dx = (inputs.x_variable_max - inputs.x_variable_min) / \
@@ -90,9 +109,11 @@ def E_function(x, k, metamodel, inputs):
             dy = (inputs.y_variable_max - inputs.y_variable_min) / \
                 (metamodel.n_E[1])  # Same for all element
 
+
             ''' As x[:,1] are not well ordered, the torch.bucketsize approach is not the most efficient. Here we use the fact
             all element are geometrically the same. Notice that we must clamp to max = metamodel.n_E[0]-1 because of the choice
             of indexing of nodes and element '''
+
 
             # x component index of the lower left corner node of the element in which lies x
             indice_x = ((x[:, 0] // dx).type(torch.int)
@@ -101,16 +122,20 @@ def E_function(x, k, metamodel, inputs):
             indice_y = ((x[:, 1] // dy).type(torch.int)
                         ).clamp(min=0, max=metamodel.n_E[1]-1)
 
+
             indice_elt = indice_x * metamodel.n_E[1] + indice_y
             indice_nodes = metamodel.mesh_E.connectivity_table[indice_elt, :]
+
 
             ''' Translate to the reference Q4 element to use the shape functions above-defined '''
             x_translated = x - \
                 (torch.from_numpy(
                     metamodel.mesh_E.nodes[indice_nodes[:, 0]]) + torch.tensor([dx/2, dy/2]))
 
+
             #if not (condition(N0(x_translated, dx=dx, dy=dy)) and condition(N1(x_translated, dx=dx, dy=dy)) and condition(N2(x_translated, dx=dx, dy=dy)) and condition(N3(x_translated, dx=dx, dy=dy))):
             #   print(x_translated, dx, dy)
+
 
             assert condition(N0(x_translated, dx=dx, dy=dy)) and condition(N1(x_translated, dx=dx, dy=dy)) and condition(
                 N2(x_translated, dx=dx, dy=dy)) and condition(N3(x_translated, dx=dx, dy=dy))
@@ -119,8 +144,11 @@ def E_function(x, k, metamodel, inputs):
                     k[indice_nodes[:, 2]] * N2(x_translated, dx=dx, dy=dy) +
                     k[indice_nodes[:, 3]] * N3(x_translated, dx=dx, dy=dy))
 
+
     else:
         return None
+
+
 
 
 # %% Loss functions
@@ -136,9 +164,12 @@ def epsilon(metamodel, domain):
                                    grad_outputs=torch.ones_like(u[:, 1]),
                                    create_graph=True, retain_graph=True)[0]
 
+
     return torch.hstack((grad_u_x[:, 0].view(-1, 1),
                          grad_u_y[:, 1].view(-1, 1),
                          0.5*(grad_u_x[:, 1]+grad_u_y[:, 0]).view(-1, 1)))
+
+
 
 
 def eps_2_sigma(metamodel, domain, inputs):
@@ -147,21 +178,27 @@ def eps_2_sigma(metamodel, domain, inputs):
     """
     epsilon_tilde = epsilon(metamodel, domain)
 
+
     E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
     sigma_yy = E/(1-nu**2) * (nu*epsilon_tilde[:, 0] + epsilon_tilde[:, 1])
     sigma_xy = E/(1+nu) * epsilon_tilde[:, 2]
+
 
     return torch.hstack((sigma_xx.view(-1, 1),
                          sigma_yy.view(-1, 1),
                          sigma_xy.view(-1, 1)))
 
 
-def J_res_sigma(metamodel, domain, is_sigma_trained):
+
+
+def J_res(metamodel, domain, is_sigma_trained):
     """
     Loss function for physical model residual calculated on a given domain. The computation of the stress field comes from the dedicated PINN 
     """
+
 
     sigma_tilde = Fobs*is_sigma_trained * \
         metamodel.model_sigma(domain) + (1-is_sigma_trained) * \
@@ -181,11 +218,15 @@ def J_res_sigma(metamodel, domain, is_sigma_trained):
     div_sigma = torch.hstack(((grad_sigma_xx[:, 0]+grad_sigma_xy[:, 1]).view(-1, 1),
                               (grad_sigma_xy[:, 0]+grad_sigma_yy[:, 1]).view(-1, 1)))
 
+
     return 1/domain.shape[0]*torch.norm(div_sigma, p=2)**2
 
 
 
-def J_obs_F(metamodel, inputs):
+
+
+
+def J_obs_F_u(metamodel, inputs):
     """
     Loss function for the boundary conditions on the stress field, computed from the estimated strain.
     """
@@ -193,13 +234,17 @@ def J_obs_F(metamodel, inputs):
     length = inputs.x_variable_max - inputs.x_variable_min
     dx = length / (nbr_colloc_points - 1)
 
+
     eval_integral = torch.zeros(nbr_hlines-1)
     for index_hline in range(1, nbr_hlines):
         sigma_tilde = eps_2_sigma(
             metamodel, inputs.hlines[:, [0, index_hline]], inputs)
         eval_integral[index_hline-1] = dx*torch.sum(sigma_tilde[:, 1])
 
+
     return 1/(nbr_hlines-1) * torch.norm(eval_integral - Fobs*length, 2)**2
+
+
 
 
 def J_obs(metamodel, dic_model):
@@ -207,6 +252,8 @@ def J_obs(metamodel, dic_model):
     Loss function for DIC discrepancy on u. 
     """
     return dic_model.loss_DIC(dic_model.train_set, dic_model.I_0, dic_model.I_t, metamodel.model_u)
+
+
 
 
 def J_BC(metamodel, inputs, is_sigma_trained):
@@ -220,30 +267,37 @@ def J_BC(metamodel, inputs, is_sigma_trained):
     sigma_left = Fobs_bd*metamodel.model_sigma(inputs.left_BC)
     sigma_right = Fobs_bd*metamodel.model_sigma(inputs.right_BC)
 
+
     loss_top = torch.norm(sigma_top[:, 1:] - torch.tensor([Fobs_bd, 0.]), 2)**2
     loss_bottom = torch.norm(
         sigma_bottom[:, 1:] - torch.tensor([Fobs_bd, 0.]), 2)**2
     loss_left = torch.norm(sigma_left[:, ::2] - torch.tensor([0., 0.]), 2)**2
     loss_right = torch.norm(sigma_right[:, ::2] - torch.tensor([0., 0.]), 2)**2
 
+
     result = (1/inputs.left_BC.shape[0]*loss_left +
               1/inputs.right_BC.shape[0]*loss_right +
               1/inputs.top_BC.shape[0]*loss_top +
               1/inputs.bottom_BC.shape[0]*loss_bottom)
 
+
     return result
 
 
-def J_lines(metamodel, inputs, is_sigma_trained):
+
+
+def J_obs_F_sigma(metamodel, inputs, is_sigma_trained):
     """
     Loss function for the boundary conditions on the stress field, estimated by the dedicated PINN.
     """
     Fobs_unit = torch.tensor([1.])
     Fobs_bd = is_sigma_trained*Fobs + (1-is_sigma_trained)*Fobs_unit
 
+
     nbr_colloc_points, nbr_hlines = inputs.hlines.size()
     length = inputs.x_variable_max - inputs.x_variable_min
     dx = length / (nbr_colloc_points - 1)
+
 
     eval_integral = torch.zeros(nbr_hlines-1)
     for index_hline in range(1, nbr_hlines):
@@ -253,9 +307,13 @@ def J_lines(metamodel, inputs, is_sigma_trained):
     loss_hlines = torch.norm(eval_integral - Fobs_bd*length, 2)**2
     result = (1/(nbr_hlines-1) * loss_hlines)
 
+
     # result  = torch.var(eval_integral)
 
+
     return result
+
+
 
 
 def J_constitutive(metamodel, domain, inputs, is_sigma_trained, weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}):
@@ -267,7 +325,9 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained, weigths={'eps_xx
         metamodel.model_sigma(domain) + (1-is_sigma_trained) * \
         metamodel.model_sigma(domain)
 
+
     E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+
 
     relation_1 = sigma_tilde[:, 0] - E / \
         (1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
@@ -275,9 +335,5 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained, weigths={'eps_xx
         (1-nu**2) * (nu*epsilon_tilde[:, 0] + epsilon_tilde[:, 1])
     relation_3 = sigma_tilde[:, 2] - E/(1+nu) * epsilon_tilde[:, 2]
 
+
     return 1/domain.shape[0] * (weigths['eps_xx']*torch.norm(relation_1, p=2)**2 + weigths['eps_yy']*torch.norm(relation_2, p=2)**2 + weigths['eps_xy']*torch.norm(relation_3, p=2)**2)
-
-
-def Tikhonov(metamodel):
-    LE = torch.matmul(metamodel.L, metamodel.E)
-    return 1/metamodel.mesh_E.nb_nodes * torch.norm(LE, p=2)
