@@ -3,7 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib import colors
 
-from package.Mechanics_model import E_function, create_mesh_E, epsilon
+from package.Mechanics_model import create_mesh_E, epsilon ,E_function
 
 def display_data(model, inputs, ref_solution, obs): 
     """
@@ -242,6 +242,33 @@ def display_epsilon(metamodel, inputs):
 
     plt.show()
 
+
+def display_E(metamodel, inputs):
+    '''Function to display the strain tensor components
+    Inputs: - metamodel
+    - inputs
+    '''
+    fig, ax = plt.subplots()
+    plt.subplots_adjust(hspace=0.4)
+
+    x, y        = torch.linspace(inputs.x_variable_min, inputs.x_variable_max, 100, requires_grad=True), torch.linspace(inputs.y_variable_min, inputs.y_variable_max, 100, requires_grad=True)
+    [X, Y]      = torch.meshgrid(x,y)
+    domain      = torch.hstack((X.reshape((X.numel(), 1)), Y.reshape((Y.numel(), 1))))
+    E_est       = metamodel.model_E(domain).detach().numpy()
+
+
+    h = ax.scatter(domain[:,0].detach().numpy(), domain[:,1].detach().numpy(), c=E_est, s=2**4, cmap = 'jet')
+    plt.colorbar(h, ax=ax)
+    ax.set_xlabel(r'$x$ \ [mm]')
+    ax.set_ylabel(r'$y$ \ [mm]')
+    ax.set_title(r'$E_{est}(x,y)$ \ [GPa]')
+    ax.axis('equal')
+
+
+    plt.show()
+
+
+"""
 def display_E(metamodel, inputs, display_mesh = True, alpha_mesh = 0.5):
     ''' Function to display a colormap of the Young's modulus
     Inputs: - metamodel
@@ -249,10 +276,12 @@ def display_E(metamodel, inputs, display_mesh = True, alpha_mesh = 0.5):
     - display_mesh: True to display the mesh of E on top of the colormap 
     - alpha_mesh: set the alpha value for displaying the mesh of E
     '''
-
+    x, y        = torch.linspace(inputs.x_variable_min, inputs.x_variable_max, 100, requires_grad=True), torch.linspace(inputs.y_variable_min, inputs.y_variable_max, 100, requires_grad=True)
+    [X, Y]      = torch.meshgrid(x,y)
+    domain      = torch.hstack((X.reshape((X.numel(), 1)), Y.reshape((Y.numel(), 1))))
     coarse_mesh = create_mesh_E(inputs, n_E = [100, 100])
-    E_est       = E_function(torch.from_numpy(coarse_mesh.nodes), metamodel.E, metamodel, inputs)
-    E_solution  = E_function(torch.from_numpy(coarse_mesh.nodes), metamodel.E_solution, metamodel, inputs)
+    E_est       = metamodel.model_E(domain)
+    E_solution  =  None #E_function(torch.from_numpy(coarse_mesh.nodes), metamodel.E_solution, metamodel, inputs)
 
     if metamodel.Efunc is None:
         fig, ax = plt.subplots()
@@ -302,7 +331,7 @@ def display_E(metamodel, inputs, display_mesh = True, alpha_mesh = 0.5):
             ax = metamodel.mesh_E.plot(ax, alpha = alpha_mesh)     
 
     plt.show()
-
+"""
 def display_training(metamodel, loss_to_display = {'res':1,'obs':1,'BC_sigma':1,'constitutive':1}):
     J_train = np.asarray(metamodel.list_J_train)[metamodel.list_iter_flag[1:]]
 

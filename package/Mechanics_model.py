@@ -179,7 +179,7 @@ def eps_2_sigma(metamodel, domain, inputs):
     epsilon_tilde = epsilon(metamodel, domain)
 
 
-    E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+    E = metamodel.model_E(domain) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
@@ -285,7 +285,6 @@ def J_BC(metamodel, inputs, is_sigma_trained):
 
 
 
-
 def J_obs_F_sigma(metamodel, inputs, is_sigma_trained):
     """
     Loss function for the boundary conditions on the stress field, estimated by the dedicated PINN.
@@ -316,7 +315,40 @@ def J_obs_F_sigma(metamodel, inputs, is_sigma_trained):
 
 
 
-def J_constitutive(metamodel, domain, inputs, is_sigma_trained, weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}):
+"""
+#ajout perte sur E pas trop de sens physique car on ne peut pas vraiment calculer E en fonction de l'effort
+def J_obs_F_E(metamodel, inputs):
+    
+    #Loss function for the boundary conditions on the stress field, estimated by the dedicated PINN.
+   
+
+    Fobs_bd = Fobs
+
+
+    nbr_colloc_points, nbr_hlines = inputs.hlines.size()
+    length = inputs.x_variable_max - inputs.x_variable_min
+    dx = length / (nbr_colloc_points - 1)
+
+
+    eval_integral = torch.zeros(nbr_hlines-1)
+    for index_hline in range(1, nbr_hlines):
+        E = Fobs_bd * \
+            metamodel.model_E(inputs.hlines[:, [0, index_hline]])
+        eval_integral[index_hline-1] = dx*torch.sum(E[:, 1])
+    loss_hlines = torch.norm(eval_integral - Fobs_bd*length, 2)**2
+    result = (1/(nbr_hlines-1) * loss_hlines)
+
+
+    # result  = torch.var(eval_integral)
+
+
+    return result
+
+"""
+
+
+
+def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}):
     """
     Loss function for the constitutive relation between the strain and the stress
     """
@@ -324,9 +356,12 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained, weigths={'eps_xx
     sigma_tilde = Fobs*is_sigma_trained * \
         metamodel.model_sigma(domain) + (1-is_sigma_trained) * \
         metamodel.model_sigma(domain)
+    
+    #CHANGEMENT POUR E
 
+    E=metamodel.model_E(domain)
 
-    E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+    #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
 
     relation_1 = sigma_tilde[:, 0] - E / \

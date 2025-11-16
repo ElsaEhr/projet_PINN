@@ -61,12 +61,13 @@ class MetaModel():
 
                 #NN pour E
         
-        layers_E = [256,256]
+        layers_E = deepcopy(layers) #[256,256]
+        layers_E.append(1)
         activation_E = nn.ReLU()
 
         self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
-                            Fourier_features,
-                            seed, verbose, N_FF,
+                            Fourier_features=False, 
+                            seed=seed, verbose=verbose, N_FF=N_FF,
                             sigma_FF=1, optim_freq=optim_freq)
 
         self.E_ref = E_ref
@@ -89,6 +90,8 @@ class MetaModel():
 
         self.iter_LFBGS_altern = iter_LFBGS_altern
         """
+
+        self.Efunc = None
 
         # Lists initialization
         self.list_J_train = []
@@ -144,7 +147,7 @@ class MetaModel():
         self.optim = optim
         self.verbose = verbose  # 1 all, 0 nothing
         self.is_sigma_trained = False
-
+      
 
         # You can change the values of the lambdas for pre-training here!
         self.lambdas = {'res': 1, 'obs': 1, 'obs_F_u': 1,
@@ -250,38 +253,37 @@ class MetaModel():
                       " Loss: ", self.J_train.item())
                 
 
-
-        def pretrain_E(self, inputs, dic_model, pre_train_iter=100):
-            ''' 
-            Supervised learning for E
-            '''
-            self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
-                            'BC': 0, 'lines': 0, 'constitutive': 0, 'tikhonov': 0}
-
-            # Normalization of losses if not already done
-            if self.normalized_losses['obs_F'] == np.inf:
-                self.normalized_losses['obs_F'] = Mechanics_model.J_obs_F(
-                    self, dic_model).detach().clone()
+    """
+    def pretrain_E(self, inputs, dic_model, pre_train_iter=100):
+        ''' 
+        Supervised learning for E
+        '''
+        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0}
+    
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs_F'] == np.inf:
+            self.normalized_losses['obs_F'] = Mechanics_model.J_obs_F(self, dic_model).detach().clone()
                 
-            def J(metamodel, domain, inputs, dic_model):
-                return (torch.tensor(0),
-                        metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
-                        Mechanics_model.J_obs(metamodel, dic_model),
-                        torch.tensor(0),
-                        torch.tensor(0),
-                        torch.tensor(0),
-                        torch.tensor(0),
-                        torch.tensor(0.))
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                    Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),                       
+                    torch.tensor(0.))
 
-            optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
-            self.optim = 'Adam'
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
 
-            for epoch in range(pre_train_iter):
-                self.gradient_descent_u(J, optimizer, inputs, dic_model)
-                if self.verbose == 1:
-                    print("Epoch: ", epoch+1, "/", pre_train_iter,
-                        " Loss: ", self.J_train.item())
-
+        for epoch in range(pre_train_iter):
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                    " Loss: ", self.J_train.item())
+    """
 
     def train_model(self, inputs, dic_model, alter_steps=10,
                     alter_freq=(50, 50, 50),
@@ -371,18 +373,21 @@ class MetaModel():
             # Minimizing on E
             self.lambdas = lambdas_identif_E
 
-
-            optimizer = torch.optim.Adam([self.E])
+            
+            optimizer = torch.optim.Adam(self.model_E.parameters()) #on optimise les paramètres du PINN
             self.optim = 'Adam'
+            self.gradient_descent_E(J_update_u, optimizer, inputs, dic_model) #on met le modèle des niveaux de gris
+            #self.gradient_descent(J_identif_E, optimizer, inputs)
+            print( " Loss: ", self.J_train.item())
 
-
-            for epoch in range(alter_freq[0]//2):
-                self.gradient_descent(J_identif_E, optimizer, inputs)
+            """
+            for epoch in range(alter_freq[0]//2): #à laisser ou pas ? semble pas bcp diminuer la loss
+                
                 print("Epoch: ", epoch+1, "/",
                       alter_freq[0]//2, " Loss: ", self.J_train.item())
+            
 
-
-            optimizer = torch.optim.LBFGS([self.E],
+            optimizer = torch.optim.LBFGS(self.model_E.parameters(), #on optimise les paramètres du PINN
                                           lr=1,
                                           max_iter=alter_freq[0]//2 - 1,
                                           max_eval=10*alter_freq[0]//2,
@@ -391,12 +396,12 @@ class MetaModel():
                                           tolerance_change=-1)
             self.optim = 'LBFGS'
             self.gradient_descent(J_identif_E, optimizer, inputs)
-
+            """
 
             print("Saving E ")
             self.list_E_matrix.append(self.E.detach().clone())
             
-            display.display_E(self, inputs, display_mesh=False)
+            display.display_E(self, inputs)#, display_mesh=False)
 
 
             # Minimizing on sigma
@@ -476,10 +481,12 @@ class MetaModel():
             self.J_obs_train = self.J_train[1]
             self.J_obs_F_u_train = self.J_train[2]
             self.J_BC_train = torch.tensor([0])
-            self.J_obs_F_sigma_train = torch.tensor([0])
+            self.J_obs_F_sigma_train = torch.tensor([0]) #pourquoi tensor ici et 
             self.J_constitutive_train = self.J_train[5]
+            #self.J_obs_F_E_train=self.J_train[6]
             self.J_train = sum(self.J_train)
             self.J_train.backward(retain_graph=True)
+            
 
 
             # Clipping the gradient to avoid diverging during the training
@@ -487,9 +494,12 @@ class MetaModel():
                 self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
             nn.utils.clip_grad_norm_(
                 self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
 
 
             # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
             with torch.no_grad():
                 self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
                 # print('E clamped')
@@ -505,6 +515,60 @@ class MetaModel():
 
 
         optimizer.step(closure)
+
+    def gradient_descent_E(self, J, optimizer, inputs, dic_model):
+        """
+        Gradient descent method used during the training for updating parameters. 
+        """
+
+        self.J_train = J(self, inputs.train, inputs,dic_model)
+
+
+        def closure():
+            optimizer.zero_grad()
+
+
+            self.J_train = J(self, inputs.train, inputs, dic_model)
+            self.J_res_train = torch.tensor([0])
+            self.J_obs_train = self.J_train[1]
+            self.J_obs_F_u_train = self.J_train[2]
+            self.J_BC_train = torch.tensor([0])
+            self.J_obs_F_sigma_train = self.J_train[4]
+            self.J_constitutive_train = self.J_train[5]
+            #self.J_obs_F_E_train=self.J_train[6]
+            self.J_train = sum(self.J_train)
+            self.J_train.backward(retain_graph=True)
+
+
+            # Clipping the gradient to avoid diverging during the training
+            nn.utils.clip_grad_norm_(
+                self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
+
+
+            # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
+            with torch.no_grad():
+                self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+                # print('E clamped')
+
+
+            self.iter_eval += 1
+
+
+            with torch.no_grad():
+                self.update_lists(inputs, optimizer)
+                self.iter += 1
+            return self.J_train
+
+
+        optimizer.step(closure)
+
+
+
         
     def gradient_descent(self, J, optimizer, inputs):
         """
@@ -523,6 +587,7 @@ class MetaModel():
             self.J_BC_train = self.J_train[3]
             self.J_obs_F_sigma_train = self.J_train[4]
             self.J_constitutive_train = self.J_train[5]
+            #self.J_obs_F_E_train=self.J_train[6]
             self.J_train = sum(self.J_train)
             self.J_train.backward(retain_graph=True)
 
@@ -532,9 +597,12 @@ class MetaModel():
                 self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
             nn.utils.clip_grad_norm_(
                 self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
 
 
             # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
             with torch.no_grad():
                 self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
                 # print('E clamped')
@@ -561,7 +629,7 @@ class MetaModel():
         self.list_J_train.append([self.J_train.item(), self.J_res_train.item(),
                                   self.J_obs_train.item(), self.J_obs_F_u_train.item(),
                                   self.J_BC_train.item(), self.J_obs_F_sigma_train.item(),
-                                  self.J_constitutive_train.item()])
+                                  self.J_constitutive_train.item()]) #ajout de self.J_obs_F_E_train.item()
 
 
         self.J_train = self.J_train.detach().clone()
@@ -571,7 +639,7 @@ class MetaModel():
         self.J_BC_train = self.J_BC_train.detach().clone()
         self.J_obs_F_sigma_train = self.J_obs_F_sigma_train.detach().clone()
         self.J_constitutive_train = self.J_constitutive_train.detach().clone()
-
+        #self.J_obs_F_E_train=self.J_obs_F_E_train.detach.clone() #ajout ici aussi
 
         if self.optim == "LBFGS":
             self.list_LBFGS_n_iter.append(
