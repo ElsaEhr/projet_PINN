@@ -64,8 +64,11 @@ class MetaModel():
         layers_E = deepcopy(layers) #[256,256]
         layers_E.append(1)
         activation_E = nn.ReLU()
+        #activation_E = nn.Tanh() on tente juste pour voir
+        optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
 
-        self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
+
+        self.model_E = PINN(device, inputs, layers_E, activation_E, optim_E,
                             Fourier_features=False, 
                             seed=seed, verbose=verbose, N_FF=N_FF,
                             sigma_FF=1, optim_freq=optim_freq)
