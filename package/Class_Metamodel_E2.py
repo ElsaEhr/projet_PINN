@@ -65,10 +65,10 @@ class MetaModel():
         layers_E.append(1)
         activation_E = nn.ReLU()
         #activation_E = nn.Tanh() on tente juste pour voir
-        optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
+        #optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
 
 
-        self.model_E = PINN(device, inputs, layers_E, activation_E, optim_E,
+        self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
                             Fourier_features=False, 
                             seed=seed, verbose=verbose, N_FF=N_FF,
                             sigma_FF=1, optim_freq=optim_freq)
@@ -379,7 +379,7 @@ class MetaModel():
             
             optimizer = torch.optim.Adam(self.model_E.parameters()) #on optimise les paramètres du PINN
             self.optim = 'Adam'
-            self.gradient_descent_E(J_update_u, optimizer, inputs, dic_model) #on met le modèle des niveaux de gris
+            self.gradient_descent_E(J_identif_E, optimizer, inputs)#,dic_model) on met le modèle des niveaux de gris
             #self.gradient_descent(J_identif_E, optimizer, inputs)
             print( " Loss: ", self.J_train.item())
 

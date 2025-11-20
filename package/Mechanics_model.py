@@ -372,3 +372,67 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx'
 
 
     return 1/domain.shape[0] * (weigths['eps_xx']*torch.norm(relation_1, p=2)**2 + weigths['eps_yy']*torch.norm(relation_2, p=2)**2 + weigths['eps_xy']*torch.norm(relation_3, p=2)**2)
+
+import torch
+
+def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
+    """
+    Interpolates the grayscale values of an image (I_0 or I_t)
+    at points given in real-world coordinates (inputs_rwc).
+
+    inputs_rwc : (N,2) tensor
+                 columns = [x_rwc, y_rwc] in mm
+    dic_instance : instance of the DIC class
+    image_type : 'I_0' (initial image) or 'I_t' (deformed image)
+
+    Returns ---> (N,) interpolated grayscale values
+    """
+
+    # ---- 0) Select the image ----
+    if image_type == 'I_0':
+        image = dic_instance.I_0
+    elif image_type == 'I_t':
+        image = dic_instance.I_t
+    else:
+        raise ValueError("image_type must be 'I_0' or 'I_t'")
+
+    # Make sure the image is a torch tensor on the correct device
+    device = inputs_rwc.device
+    if not isinstance(image, torch.Tensor):
+        image = torch.tensor(image, dtype=torch.float32, device=device)
+    else:
+        image = image.to(device)
+
+    # ---- 1) Convert RWC -> pixel coordinates ----
+    pts_px = dic_instance.from_rwc_2_px(inputs_rwc)   # (N,2)
+    # Convention: pts_px[:,0] = row index, pts_px[:,1] = col index
+
+    H, W = dic_instance.nb_px_row, dic_instance.nb_px_col
+
+    # Clamp to stay inside image bounds
+    x = torch.clamp(pts_px[:,1], 0, W-1)  # column
+    y = torch.clamp(pts_px[:,0], 0, H-1)  # row
+
+    # ---- 2) Bilinear interpolation ----
+    x0 = torch.floor(x).long()
+    x1 = torch.clamp(x0 + 1, max=W-1)
+    y0 = torch.floor(y).long()
+    y1 = torch.clamp(y0 + 1, max=H-1)
+
+    # interpolation weights
+    wx = x - x0.float()
+    wy = y - y0.float()
+
+    # intensities of the 4 neighboring pixels
+    I00 = image[y0, x0]
+    I10 = image[y0, x1]
+    I01 = image[y1, x0]
+    I11 = image[y1, x1]
+
+    # interpolate horizontally then vertically
+    I_top = I00 * (1 - wx) + I10 * wx
+    I_bottom = I01 * (1 - wx) + I11 * wx
+    I_interp = I_top * (1 - wy) + I_bottom * wy
+
+    return I_interp   # (N,)
+
