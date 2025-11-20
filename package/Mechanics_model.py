@@ -388,7 +388,7 @@ def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     Returns ---> (N,) interpolated grayscale values
     """
 
-    # ---- 0) Select the image ----
+    # Selection of the image 
     if image_type == 'I_0':
         image = dic_instance.I_0
     elif image_type == 'I_t':
@@ -403,7 +403,7 @@ def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     else:
         image = image.to(device)
 
-    # ---- 1) Convert RWC -> pixel coordinates ----
+    # Conversion real world coordinates to pixel index
     pts_px = dic_instance.from_rwc_2_px(inputs_rwc)   # (N,2)
     # Convention: pts_px[:,0] = row index, pts_px[:,1] = col index
 
@@ -413,26 +413,22 @@ def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     x = torch.clamp(pts_px[:,1], 0, W-1)  # column
     y = torch.clamp(pts_px[:,0], 0, H-1)  # row
 
-    # ---- 2) Bilinear interpolation ----
+    # INTERPOLATION
     x0 = torch.floor(x).long()
     x1 = torch.clamp(x0 + 1, max=W-1)
     y0 = torch.floor(y).long()
     y1 = torch.clamp(y0 + 1, max=H-1)
-
     # interpolation weights
     wx = x - x0.float()
     wy = y - y0.float()
-
     # intensities of the 4 neighboring pixels
     I00 = image[y0, x0]
     I10 = image[y0, x1]
     I01 = image[y1, x0]
     I11 = image[y1, x1]
-
     # interpolate horizontally then vertically
     I_top = I00 * (1 - wx) + I10 * wx
     I_bottom = I01 * (1 - wx) + I11 * wx
     I_interp = I_top * (1 - wy) + I_bottom * wy
-
     return I_interp   # (N,)
 
