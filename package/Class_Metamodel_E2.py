@@ -379,7 +379,7 @@ class MetaModel():
             
             optimizer = torch.optim.Adam(self.model_E.parameters()) #on optimise les paramètres du PINN
             self.optim = 'Adam'
-            self.gradient_descent_E(J_identif_E, optimizer, inputs)#,dic_model) on met le modèle des niveaux de gris
+            self.gradient_descent_E(J_identif_E, optimizer, inputs, dic_model) #on met le modèle des niveaux de gris
             #self.gradient_descent(J_identif_E, optimizer, inputs)
             print( " Loss: ", self.J_train.item())
 
@@ -524,14 +524,14 @@ class MetaModel():
         Gradient descent method used during the training for updating parameters. 
         """
 
-        self.J_train = J(self, inputs.train, inputs,dic_model)
+        self.J_train = J(self, inputs.train, inputs)#,dic_model)
 
 
         def closure():
             optimizer.zero_grad()
 
 
-            self.J_train = J(self, inputs.train, inputs, dic_model)
+            self.J_train = J(self, inputs.train, inputs)#, dic_model)
             self.J_res_train = torch.tensor([0])
             self.J_obs_train = self.J_train[1]
             self.J_obs_F_u_train = self.J_train[2]

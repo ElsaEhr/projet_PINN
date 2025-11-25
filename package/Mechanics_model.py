@@ -373,7 +373,6 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx'
 
     return 1/domain.shape[0] * (weigths['eps_xx']*torch.norm(relation_1, p=2)**2 + weigths['eps_yy']*torch.norm(relation_2, p=2)**2 + weigths['eps_xy']*torch.norm(relation_3, p=2)**2)
 
-import torch
 
 def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     """
