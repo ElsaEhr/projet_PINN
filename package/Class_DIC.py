@@ -254,3 +254,64 @@ class DIC():
             I_t_vec[index_top_right[good_index]]
             
         return I_0_predict.detach().numpy()
+    
+    def get_gl_from_rwc(self,inputs_rwc):
+        """
+        Interpolates the grayscale values of an image (I_0 or I_t)
+        at points given in real-world coordinates (inputs_rwc).
+
+        inputs_rwc : (N,2) tensor
+                    columns = [x_rwc, y_rwc] in mm
+        dic_instance : instance of the DIC class
+        image_type : 'I_0' (initial image) or 'I_t' (deformed image)
+
+        Returns ---> (N,) interpolated grayscale values
+        """
+
+        # Make sure the image is a torch tensor on the correct device
+        device = inputs_rwc.device
+        
+
+        I_interp=torch.zeros(inputs_rwc.shape)
+        
+        img_list=[self.I_0,self.I_t]
+
+        for i in range (2) :
+
+        
+            image=img_list[i]
+
+            if not isinstance(image, torch.Tensor):
+                image = torch.tensor(image, dtype=torch.float32, device=device)
+            else:
+                image = image.to(device)
+
+            # Conversion real world coordinates to pixel index
+            pts_px = self.from_rwc_2_px(inputs_rwc)   # (N,2)
+            # Convention: pts_px[:,0] = row index, pts_px[:,1] = col index
+
+            H, W = self.nb_px_row, self.nb_px_col
+
+            # Clamp to stay inside image bounds
+            x = torch.clamp(pts_px[:,1], 0, W-1)  # column
+            y = torch.clamp(pts_px[:,0], 0, H-1)  # row
+
+            # INTERPOLATION
+            x0 = torch.floor(x).long()
+            x1 = torch.clamp(x0 + 1, max=W-1)
+            y0 = torch.floor(y).long()
+            y1 = torch.clamp(y0 + 1, max=H-1)
+            # interpolation weights
+            wx = x - x0.float()
+            wy = y - y0.float()
+            # intensities of the 4 neighboring pixels
+            I00 = image[y0, x0]
+            I10 = image[y0, x1]
+            I01 = image[y1, x0]
+            I11 = image[y1, x1]
+            # interpolate horizontally then vertically
+            I_top = I00 * (1 - wx) + I10 * wx
+            I_bottom = I01 * (1 - wx) + I11 * wx
+            I_interp[:,i] = I_top * (1 - wy) + I_bottom * wy
+
+        return I_interp   # (N,)

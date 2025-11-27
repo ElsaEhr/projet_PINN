@@ -172,14 +172,14 @@ def epsilon(metamodel, domain):
 
 
 
-def eps_2_sigma(metamodel, domain, inputs):
+def eps_2_sigma(metamodel, domain, dic_model, inputs):
     """
     Compute the stress from the estimated strain with the 2D in plane stress constitutive law
     """
     epsilon_tilde = epsilon(metamodel, domain)
 
 
-    E = metamodel.model_E(domain) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+    E=metamodel.model_E(dic_model.get_gl_from_rwc(domain)) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
@@ -226,7 +226,7 @@ def J_res(metamodel, domain, is_sigma_trained):
 
 
 
-def J_obs_F_u(metamodel, inputs):
+def J_obs_F_u(metamodel, inputs, dic_model):
     """
     Loss function for the boundary conditions on the stress field, computed from the estimated strain.
     """
@@ -238,7 +238,7 @@ def J_obs_F_u(metamodel, inputs):
     eval_integral = torch.zeros(nbr_hlines-1)
     for index_hline in range(1, nbr_hlines):
         sigma_tilde = eps_2_sigma(
-            metamodel, inputs.hlines[:, [0, index_hline]], inputs)
+            metamodel, inputs.hlines[:, [0, index_hline]], dic_model, inputs)
         eval_integral[index_hline-1] = dx*torch.sum(sigma_tilde[:, 1])
 
 
@@ -348,7 +348,7 @@ def J_obs_F_E(metamodel, inputs):
 
 
 
-def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}):
+def J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}): #add dic model to obtain gray scale levels
     """
     Loss function for the constitutive relation between the strain and the stress
     """
@@ -358,8 +358,7 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx'
         metamodel.model_sigma(domain)
     
     #CHANGEMENT POUR E
-
-    E=metamodel.model_E(domain)
+    E=metamodel.model_E(dic_model.get_gl_from_rwc(domain))
 
     #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
@@ -374,8 +373,10 @@ def J_constitutive(metamodel, domain, inputs, is_sigma_trained,weigths={'eps_xx'
     return 1/domain.shape[0] * (weigths['eps_xx']*torch.norm(relation_1, p=2)**2 + weigths['eps_yy']*torch.norm(relation_2, p=2)**2 + weigths['eps_xy']*torch.norm(relation_3, p=2)**2)
 
 
+
+"""
 def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
-    """
+    
     Interpolates the grayscale values of an image (I_0 or I_t)
     at points given in real-world coordinates (inputs_rwc).
 
@@ -385,7 +386,7 @@ def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     image_type : 'I_0' (initial image) or 'I_t' (deformed image)
 
     Returns ---> (N,) interpolated grayscale values
-    """
+    
 
     # Selection of the image 
     if image_type == 'I_0':
@@ -430,4 +431,4 @@ def get_gl_from_rwc(inputs_rwc, dic_instance, image_type='I_0'):
     I_bottom = I01 * (1 - wx) + I11 * wx
     I_interp = I_top * (1 - wy) + I_bottom * wy
     return I_interp   # (N,)
-
+"""
