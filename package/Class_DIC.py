@@ -262,10 +262,9 @@ class DIC():
 
         inputs_rwc : (N,2) tensor
                     columns = [x_rwc, y_rwc] in mm
-        dic_instance : instance of the DIC class
-        image_type : 'I_0' (initial image) or 'I_t' (deformed image)
+        
 
-        Returns ---> (N,) interpolated grayscale values
+        Returns ---> (N,2) interpolated grayscale values for I_0 and I_t
         """
 
         # Make sure the image is a torch tensor on the correct device
@@ -294,13 +293,19 @@ class DIC():
 
             # Clamp to stay inside image bounds
             x = torch.clamp(pts_px[:,1], 0, W-1)  # column
-            y = torch.clamp(pts_px[:,0], 0, H-1)  # row
+            y = torch.clamp(pts_px[:,0], H-1, 0)  # row
 
+            """
             # INTERPOLATION
             x0 = torch.floor(x).long()
             x1 = torch.clamp(x0 + 1, max=W-1)
             y0 = torch.floor(y).long()
             y1 = torch.clamp(y0 + 1, max=H-1)
+
+            print("x0" + str(x0))
+            print("y0" + str(y0))
+            print("x1" + str(x1))
+            print("y1" + str(y1))
             # interpolation weights
             wx = x - x0.float()
             wy = y - y0.float()
@@ -312,6 +317,18 @@ class DIC():
             # interpolate horizontally then vertically
             I_top = I00 * (1 - wx) + I10 * wx
             I_bottom = I01 * (1 - wx) + I11 * wx
+
             I_interp[:,i] = I_top * (1 - wy) + I_bottom * wy
 
+            """
+            
+            #for i in range (len(torch.floor(y).long())):
+             #   print(i)
+              #  print(torch.floor(y).long()[i])
+               # print(image[i,torch.floor(x).long()])
+
+            I_interp[:,i] = image[torch.floor(y).long(),torch.floor(x).long()]
+
+
         return I_interp   # (N,)
+# %%
