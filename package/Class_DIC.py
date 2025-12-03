@@ -127,13 +127,14 @@ class DIC():
         Outputs: inputs_rwc: converted coordinated into real-world coordinates
         """
         return torch.hstack((inputs_px[:,1].view(-1,1) * self.ratio_x, 
-                                   self.H - inputs_px[:,0].view(-1,1) * self.ratio_y))
+                                   - self.H + inputs_px[:,0].view(-1,1) * self.ratio_y))
+        
     def from_rwc_2_px(self,inputs_rwc):
         """ Convert the real-world coordinates to pixel coordinates 
         Inputs: inputs_rwc : coordinates in real-world
         Outputs: inputs_px: converted coordinated into pixel
         """
-        return torch.hstack(((inputs_rwc[:,1].view(-1,1) - self.H) / self.ratio_y, 
+        return torch.hstack(((self.H - inputs_rwc[:,1].view(-1,1)) / self.ratio_y, #changement de signe sur cette coordonnées pour éviter les coordonnées
                                    inputs_rwc[:,0].view(-1,1) / self.ratio_x))
     
     def disp_from_rwc_2_px(self, disp_rwc):
@@ -275,10 +276,9 @@ class DIC():
         
         img_list=[self.I_0,self.I_t]
 
-        for i in range (2) :
-
+        for k in range (2) :
         
-            image=img_list[i]
+            image=img_list[k]
 
             if not isinstance(image, torch.Tensor):
                 image = torch.tensor(image, dtype=torch.float32, device=device)
@@ -292,42 +292,41 @@ class DIC():
             H, W = self.nb_px_row, self.nb_px_col
 
             # Clamp to stay inside image bounds
-            x = torch.clamp(pts_px[:,1], 0, W-1)  # column
-            y = torch.clamp(pts_px[:,0], H-1, 0)  # row
+            j = torch.clamp(pts_px[:,1], 0, W-1)  # column
+            i = torch.clamp(pts_px[:,0], 0, H-1)  # row
 
-            """
             # INTERPOLATION
-            x0 = torch.floor(x).long()
-            x1 = torch.clamp(x0 + 1, max=W-1)
-            y0 = torch.floor(y).long()
-            y1 = torch.clamp(y0 + 1, max=H-1)
+            j0 = torch.floor(j).long()
+            j1 = torch.clamp(j0 + 1, max=W-1)
+            i0 = torch.floor(i).long()
+            i1 = torch.clamp(i0 + 1, max=H-1)
 
-            print("x0" + str(x0))
-            print("y0" + str(y0))
-            print("x1" + str(x1))
-            print("y1" + str(y1))
+            #print("j0" + str(j0))
+            #print("i0" + str(i0))
+            #print("j1" + str(j1))
+            #print("i1" + str(i1))
             # interpolation weights
-            wx = x - x0.float()
-            wy = y - y0.float()
+            wj = j - j0.float()
+            wi = i - i0.float()
             # intensities of the 4 neighboring pixels
-            I00 = image[y0, x0]
-            I10 = image[y0, x1]
-            I01 = image[y1, x0]
-            I11 = image[y1, x1]
+            I00 = image[i0, j0]
+            I10 = image[i0, j1]
+            I01 = image[i1, j0]
+            I11 = image[i1, j1]
             # interpolate horizontally then vertically
-            I_top = I00 * (1 - wx) + I10 * wx
-            I_bottom = I01 * (1 - wx) + I11 * wx
+            I_top = I00 * (1 - wj) + I10 * wj
+            I_bottom = I01 * (1 - wj) + I11 * wj
 
-            I_interp[:,i] = I_top * (1 - wy) + I_bottom * wy
+            I_interp[:,k] = I_top * (1 - wi) + I_bottom * wi
 
-            """
+           
             
             #for i in range (len(torch.floor(y).long())):
              #   print(i)
               #  print(torch.floor(y).long()[i])
                # print(image[i,torch.floor(x).long()])
 
-            I_interp[:,i] = image[torch.floor(y).long(),torch.floor(x).long()]
+            #I_interp[:,i] = image[torch.floor(y).long(),torch.floor(x).long()]
 
 
         return I_interp   # (N,)
