@@ -127,14 +127,14 @@ class DIC():
         Outputs: inputs_rwc: converted coordinated into real-world coordinates
         """
         return torch.hstack((inputs_px[:,1].view(-1,1) * self.ratio_x, 
-                                   - self.H + inputs_px[:,0].view(-1,1) * self.ratio_y))
+                                   self.H - inputs_px[:,0].view(-1,1) * self.ratio_y))
         
     def from_rwc_2_px(self,inputs_rwc):
         """ Convert the real-world coordinates to pixel coordinates 
         Inputs: inputs_rwc : coordinates in real-world
         Outputs: inputs_px: converted coordinated into pixel
         """
-        return torch.hstack(((self.H - inputs_rwc[:,1].view(-1,1)) / self.ratio_y, #changement de signe sur cette coordonnées pour éviter les coordonnées
+        return torch.hstack(((self.H - inputs_rwc[:,1].view(-1,1)) / self.ratio_y, #changement de signe sur cette coordonnées pour éviter les coordonnées négatives
                                    inputs_rwc[:,0].view(-1,1) / self.ratio_x))
     
     def disp_from_rwc_2_px(self, disp_rwc):
