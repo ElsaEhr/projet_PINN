@@ -254,6 +254,56 @@ class MetaModel():
             if self.verbose == 1:
                 print("Epoch: ", epoch+1, "/", pre_train_iter,
                       " Loss: ", self.J_train.item())
+
+    
+    #=======================TENTATIVE DE PRETRAIN DU E==================================
+
+    def pretrain_E(self, inputs, dic_model, pre_train_iter=100, 
+               lambdas={'res': 1, 'constitutive': 1}):
+        """
+        Pretrain the material parameters E using physics-only losses
+        (residual + constitutive).
+        """
+
+        self.lambdas = lambdas
+
+        # Normalization of losses 
+        if self.normalized_losses['res'] == np.inf:
+            self.normalized_losses['res'] = Mechanics_model.J_res(
+                self, inputs.train, is_E_trained=True).detach().clone()
+
+        if self.normalized_losses['constitutive'] == np.inf:
+            self.normalized_losses['constitutive'] = Mechanics_model.J_constitutive(
+                self, inputs.train, inputs, dic_model, is_E_trained=True).detach().clone()
+
+        # Loss function for E pretraining
+        def J(metamodel, obs, domain, inputs):
+            return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] *
+                    Mechanics_model.J_res(metamodel, domain, is_E_trained=True),
+
+                    torch.tensor(0),   # obs (only for u)
+                    torch.tensor(0),   # obs_F (only for sigma)
+                    torch.tensor(0),   # BC (not needed for E pretraining)
+                    metamodel.lambdas['constitutive'] * 
+                    1/metamodel.normalized_losses['constitutive'] *
+                    Mechanics_model.J_constitutive(metamodel, inputs.train, 
+                                                inputs, dic_model, 
+                                                is_E_trained=True)
+                    )
+
+        # Optimizer: only parameters of model_E 
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
+
+        # Training loop
+        for epoch in range(pre_train_iter):
+            self.gradient_descent(J, optimizer, inputs, obs=self.obs)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                    " Loss: ", self.J_train.item())
+
+        self.is_E_trained = True
+
                 
 
     """
