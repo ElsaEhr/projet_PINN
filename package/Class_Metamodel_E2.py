@@ -18,7 +18,7 @@ class MetaModel():
     """
 
 
-    def __init__(self, device, inputs, layers, E_0, E_ref, E_interpolation, n_E=10, activation=nn.Tanh(), optim="Adam",
+    def __init__(self, device, inputs, layers, layersE, E_0, E_ref, E_interpolation, n_E=10, activation=nn.Tanh(), optim="Adam",
                  Fourier_features=False, initial_freqs=torch.tensor([]),
                  seed=None, verbose=0, obs='rien',
                  N_FF=5,
@@ -61,7 +61,7 @@ class MetaModel():
 
                 #NN pour E
         
-        layers_E = deepcopy(layers) #[256,256]
+        layers_E = deepcopy(layersE) #[256,256]
         layers_E.append(1)
         activation_E = nn.ReLU()
         #activation_E = nn.Tanh() on tente juste pour voir
