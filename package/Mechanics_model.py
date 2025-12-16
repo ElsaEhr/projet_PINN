@@ -178,8 +178,10 @@ def eps_2_sigma(metamodel, domain, dic_model, inputs):
     """
     epsilon_tilde = epsilon(metamodel, domain)
 
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(4000, 1)
+    print(gl.shape)
 
-    E=metamodel.model_E(dic_model.get_gl_from_rwc(domain)) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+    E=metamodel.model_E(gl) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
@@ -358,7 +360,9 @@ def J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained,weigth
         metamodel.model_sigma(domain)
     
     #CHANGEMENT POUR E
-    E=metamodel.model_E(dic_model.get_gl_from_rwc(domain))
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(4000, 1)
+    print(gl.shape)
+    E=metamodel.model_E(gl)
 
     #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 

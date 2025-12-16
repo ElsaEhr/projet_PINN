@@ -67,6 +67,7 @@ class MetaModel():
         #activation_E = nn.Tanh() on tente juste pour voir
         #optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
 
+        print("model E")
 
         self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
                             Fourier_features=False, 

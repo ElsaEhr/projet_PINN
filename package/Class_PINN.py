@@ -24,10 +24,17 @@ class PINN(nn.Module):
         self.device = device  # Device specification
         self.input_save = inputs
 
-        self.variable_min = torch.tensor(
-            [inputs.x_variable_min, inputs.y_variable_min])
-        self.variable_max = torch.tensor(
-            [inputs.x_variable_max, inputs.y_variable_max])
+        if (layers[0] ==1) : #normalisation niveaux de gris 
+
+            self.variable_min = 0
+            self.variable_max = 255
+            
+        else :
+
+            self.variable_min = torch.tensor(
+                [inputs.x_variable_min, inputs.y_variable_min])
+            self.variable_max = torch.tensor(
+                [inputs.x_variable_max, inputs.y_variable_max])
 
         self.hidden = nn.ModuleList().to(self.device)
         self.layers = layers
@@ -65,9 +72,13 @@ class PINN(nn.Module):
     def forward(self, input_tensor):
 
         # Normalization layer
+  
+        print(input_tensor)
         input_tensor = input_tensor.to(self.device)
         input_tensor = torch.div(
             input_tensor - self.variable_min, self.variable_max - self.variable_min)
+        
+        print(input_tensor)
 
         # Fourier features
         if self.Fourier_features:
@@ -81,7 +92,7 @@ class PINN(nn.Module):
             input_tensor = FF
             input_tensor.to(self.device)
 
-        # Forward
+
         for (l, linear_transform) in zip(range(len(self.hidden)), self.hidden):
             # For input and hidden layers, apply activation function after linear transformation
             if l < len(self.hidden) - 1:
