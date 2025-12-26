@@ -30,6 +30,7 @@ class Inputs:
         self.y_variable_min = variable_boundaries[1][0]
         self.y_variable_max = variable_boundaries[1][1]
 
+
         # Get the collocation points in the domain
         x_grid = torch.linspace(self.x_variable_min,
                                 self.x_variable_max,

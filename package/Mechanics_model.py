@@ -179,7 +179,6 @@ def eps_2_sigma(metamodel, domain, dic_model, inputs):
     epsilon_tilde = epsilon(metamodel, domain)
 
     gl=dic_model.get_gl_from_rwc(domain)[:,0].view(4000, 1)
-    print(gl.shape)
 
     E=metamodel.model_E(gl) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 

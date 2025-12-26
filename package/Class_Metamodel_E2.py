@@ -4,7 +4,7 @@ import numpy as np
 import package.display as display
 import package.Mechanics_model as Mechanics_model
 from package.Class_PINN import PINN
-
+from package.Class_PINN_E import PINN_E
 
 from copy import deepcopy
 
@@ -69,7 +69,7 @@ class MetaModel():
 
         print("model E")
 
-        self.model_E = PINN(device, inputs, layers_E, activation_E, optim,
+        self.model_E = PINN_E(device, inputs, layers_E, activation_E, optim,
                             Fourier_features=False, 
                             seed=seed, verbose=verbose, N_FF=N_FF,
                             sigma_FF=1, optim_freq=optim_freq)
