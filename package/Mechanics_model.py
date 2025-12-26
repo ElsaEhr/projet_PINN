@@ -7,7 +7,7 @@ from package.Class_Mesh import Mesh
 
 
 # %% Physical constants
-F = torch.tensor([50.])  # traction effort in MPa
+F = torch.tensor([300.])  # traction effort in MPa
 stdF = 0.  # standard deviation of the added gaussian noise on F
 Fobs = F + stdF*torch.randn(1)  # F avec le bruit
 nu = 0.3  # Poisson ratio
@@ -178,7 +178,8 @@ def eps_2_sigma(metamodel, domain, dic_model, inputs):
     """
     epsilon_tilde = epsilon(metamodel, domain)
 
-    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(4000, 1)
+
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
 
     E=metamodel.model_E(gl) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
@@ -349,7 +350,7 @@ def J_obs_F_E(metamodel, inputs):
 
 
 
-def J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}): #add dic model to obtain gray scale levels
+def J_constitutive(metamodel, domain, inputs,dic_model, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1}): #add dic model to obtain gray scale levels
     """
     Loss function for the constitutive relation between the strain and the stress
     """
@@ -359,8 +360,7 @@ def J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained,weigth
         metamodel.model_sigma(domain)
     
     #CHANGEMENT POUR E
-    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(4000, 1)
-    print(gl.shape)
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
     E=metamodel.model_E(gl)
 
     #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)

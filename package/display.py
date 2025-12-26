@@ -243,7 +243,7 @@ def display_epsilon(metamodel, inputs):
     plt.show()
 
 
-def display_E(metamodel, inputs):
+def display_E(metamodel, inputs,dic_model):
     '''Function to display the strain tensor components
     Inputs: - metamodel
     - inputs
@@ -254,7 +254,8 @@ def display_E(metamodel, inputs):
     x, y        = torch.linspace(inputs.x_variable_min, inputs.x_variable_max, 100, requires_grad=True), torch.linspace(inputs.y_variable_min, inputs.y_variable_max, 100, requires_grad=True)
     [X, Y]      = torch.meshgrid(x,y)
     domain      = torch.hstack((X.reshape((X.numel(), 1)), Y.reshape((Y.numel(), 1))))
-    E_est       = metamodel.model_E(domain).detach().numpy()
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
+    E_est       = metamodel.model_E(gl).detach().numpy()
 
 
     h = ax.scatter(domain[:,0].detach().numpy(), domain[:,1].detach().numpy(), c=E_est, s=2**4, cmap = 'jet')

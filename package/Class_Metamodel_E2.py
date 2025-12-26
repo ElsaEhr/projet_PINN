@@ -5,6 +5,10 @@ import package.display as display
 import package.Mechanics_model as Mechanics_model
 from package.Class_PINN import PINN
 from package.Class_PINN_E import PINN_E
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import torchvision.transforms.functional as F
+from package.Class_DIC import DIC
 
 from copy import deepcopy
 
@@ -222,13 +226,14 @@ class MetaModel():
         self.is_sigma_trained = True
 
 
-    def pretrain_u(self, inputs, dic_model, pre_train_iter=100):
+    def pretrain_u_blur(self, inputs, I_0_torch, I_t_torch, train_set, liste, pre_train_iter=100, lr=1e-4):
         ''' 
         Supervised learning for u
+        Applique un flou à l'image pour stabiliser l'entrainement
         '''
         self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
                         'BC': 0, 'lines': 0, 'constitutive': 0}
-
+        dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
 
         # Normalization of losses if not already done
         if self.normalized_losses['obs'] == np.inf:
@@ -245,16 +250,101 @@ class MetaModel():
                     torch.tensor(0),
                     torch.tensor(0))
 
-
-        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=1e-3)
+        
+        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99), weight_decay=1e-5)
         self.optim = 'Adam'
+        scheduler=torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
 
+        sigma0=5/0.8
+        sigma=sigma0
+
+        for epoch in range(pre_train_iter):
+            if (epoch%50==0 and epoch<450):
+                #entrainement sur des images floutées pour augmenter la zone d'information, on réduit le floutage toutes les 50 époques
+                sigma=sigma*0.8
+                I_0blr=F.gaussian_blur(I_0_torch.unsqueeze(0), kernel_size=21, sigma=sigma).squeeze(0)
+                I_tblr=F.gaussian_blur(I_t_torch.unsqueeze(0), kernel_size=21, sigma=sigma).squeeze(0)
+                dic_model=DIC(I_0blr, I_tblr, train_set, liste)
+            
+
+
+
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                      " Loss: ", self.J_train.item())
+            #if self.J_train.item()<0.53 :
+                #break
+            scheduler.step(self.J_train.item())
+
+
+        optimizer = torch.optim.LBFGS(self.model_u.parameters(), lr=1, line_search_fn="strong_wolfe",max_iter=5)
+        self.optim = 'LFBGS'
+
+        
+
+        for E in range(1) : 
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("LFBGS ",E, "Loss: ", self.J_train.item())
+
+        dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
+        self.gradient_descent_u(J, optimizer, inputs, dic_model)
+        print(" Loss: ", self.J_train.item())
+
+
+
+
+    def pretrain_u(self, inputs, dic_model, pre_train_iter=100, lr=1e-4):
+        '''             
+        Supervised learning for u
+        '''
+        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0}
+
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs'] == np.inf:
+            self.normalized_losses['obs'] = Mechanics_model.J_obs(self, dic_model).detach().clone()
+
+
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                    Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0))
+
+            
+        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99))
+        self.optim = 'Adam'
+        scheduler=CosineAnnealingLR(optimizer, T_max=500, eta_min=1e-7)#ReduceLROnPlateau(optimizer, factor=0.5, patience=3,min_lr=1e-6)
+
+            
 
         for epoch in range(pre_train_iter):
             self.gradient_descent_u(J, optimizer, inputs, dic_model)
             if self.verbose == 1:
                 print("Epoch: ", epoch+1, "/", pre_train_iter,
-                      " Loss: ", self.J_train.item())
+                    " Loss: ", self.J_train.item())
+                #if self.J_train.item()<0.53 :
+                    #break
+            scheduler.step(self.J_train.item())
+
+        """
+        #seconde optimisation fine pour la frontière avec le composite
+
+        optimizer = torch.optim.LBFGS(self.model_u.parameters(), lr=0.1, max_iter=20, line_search_fn="strong_wolfe")
+        self.optim = 'LBFGS'
+        
+        for E in range(100) : 
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("LFBGS ",E, "Loss: ", self.J_train.item())
+                
+        """
+       
 
     
     #=======================TENTATIVE DE PRETRAIN DU E==================================
@@ -455,7 +545,7 @@ class MetaModel():
             print("Saving E ")
             self.list_E_matrix.append(self.E.detach().clone())
             
-            display.display_E(self, inputs)#, display_mesh=False)
+            display.display_E(self, inputs, dic_model)#, display_mesh=False)
 
 
             # Minimizing on sigma
@@ -729,6 +819,15 @@ class MetaModel():
                 print('!!!!! ATTENTION !!!!!!')
                 self.list_iter_flag.pop()
                 self.end_training = False
+                
+        elif self.optim == 'SGD':
+            self.list_LBFGS_n_iter.append([1])
+            self.list_iter_flag.append(True)
+            self.iter += 1
+            if self.end_training:
+                print('!!!!! ATTENTION !!!!!!')
+                self.list_iter_flag.pop()
+                self.end_training = False
 
 
         else:
@@ -737,7 +836,7 @@ class MetaModel():
 
 
             if self.end_training:
-                print('!!!!! ATTENTION !!!!!!')
+                ('!!!!! ATTENTION !!!!!!')
                 self.list_iter_flag.pop()
                 self.end_training = False
 

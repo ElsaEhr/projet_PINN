@@ -66,12 +66,10 @@ class PINN(nn.Module):
 
         # Normalization layer
   
-        print(input_tensor)
         input_tensor = input_tensor.to(self.device)
         input_tensor = torch.div(
             input_tensor - self.variable_min, self.variable_max - self.variable_min)
         
-        print(input_tensor)
 
         # Fourier features
         if self.Fourier_features:

@@ -15,7 +15,7 @@ class PINN_E(nn.Module):
         Initialization of the PINN, with the number of layers and the first guess for the physical parameter. 
         """
 
-        super(PINN, self).__init__()
+        super(PINN_E, self).__init__()
 
         # Seed for initialization reproductibility
         if seed is not None:
@@ -64,13 +64,11 @@ class PINN_E(nn.Module):
     def forward(self, input_tensor):
 
         # Normalization layer
-  
-        print(input_tensor)
         input_tensor = input_tensor.to(self.device)
         input_tensor = torch.div(
             input_tensor - self.variable_min, self.variable_max - self.variable_min)
         
-        print(input_tensor)
+
 
         # Fourier features
         if self.Fourier_features:
