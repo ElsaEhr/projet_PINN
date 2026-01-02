@@ -179,7 +179,7 @@ class MetaModel():
             self.model_u = torch.load(path)
 
 
-    def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1, 'constitutive': 1}):
+    def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1}):
         self.lambdas = lambdas
 
 
@@ -198,7 +198,9 @@ class MetaModel():
                 self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained).detach().clone()
 
 
+
         def J(metamodel, obs, domain, inputs):
+            print(metamodel.lambdas['obs_F_sigma'])
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, domain, is_sigma_trained=metamodel.is_sigma_trained),
                     torch.tensor(0),
                     torch.tensor(0),
@@ -560,7 +562,7 @@ class MetaModel():
                                           tolerance_grad=-1,
                                           tolerance_change=-1)
             self.optim = 'LBFGS'
-            self.gradient_descent(J_update_sigma, optimizer, inputs)
+            self.gradient_descent(J_update_sigma, optimizer, inputs,obs=self.obs)
             iter_theta += 1
 
 
@@ -714,7 +716,7 @@ class MetaModel():
 
 
         
-    def gradient_descent(self, J, optimizer, inputs):
+    def gradient_descent(self, J, optimizer, inputs,obs):
         """
         Gradient descent method used during the training for updating parameters. 
         """
@@ -724,7 +726,7 @@ class MetaModel():
             optimizer.zero_grad()
 
 
-            self.J_train = J(self, inputs.train, inputs)
+            self.J_train = J(self,obs, inputs.train, inputs)
             self.J_res_train = self.J_train[0]
             self.J_obs_train = torch.tensor([0])
             self.J_obs_F_u_train = self.J_train[2]
