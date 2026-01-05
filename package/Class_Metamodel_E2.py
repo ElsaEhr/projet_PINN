@@ -179,9 +179,12 @@ class MetaModel():
             self.model_u = torch.load(path)
 
 
+
+
+
+
     def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1}):
         self.lambdas = lambdas
-
 
         # Normalization of losses if not done already
         if self.normalized_losses['res'] == np.inf:
@@ -200,7 +203,6 @@ class MetaModel():
 
 
         def J(metamodel, obs, domain, inputs):
-            print(metamodel.lambdas['obs_F_sigma'])
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, domain, is_sigma_trained=metamodel.is_sigma_trained),
                     torch.tensor(0),
                     torch.tensor(0),
@@ -217,7 +219,7 @@ class MetaModel():
         optimizer = torch.optim.Adam(self.model_sigma.parameters())
         self.optim = 'Adam'
 
-
+  
         for epoch in range(pre_train_iter):
             self.gradient_descent(J, optimizer, inputs, obs=self.obs)
             if self.verbose == 1:
@@ -477,7 +479,7 @@ class MetaModel():
                         metamodel, domain, inputs, dic_model, is_sigma_trained=True))
 
 
-        def J_update_sigma(metamodel, domain, inputs):
+        def J_update_sigma(metamodel, domain, train_inputs, inputs):
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, inputs.train, is_sigma_trained=True),
                     torch.tensor(0.),
                     torch.tensor(0.),
@@ -562,6 +564,8 @@ class MetaModel():
                                           tolerance_grad=-1,
                                           tolerance_change=-1)
             self.optim = 'LBFGS'
+            print("cc")
+            print(self.obs)
             self.gradient_descent(J_update_sigma, optimizer, inputs,obs=self.obs)
             iter_theta += 1
 
@@ -724,8 +728,8 @@ class MetaModel():
 
         def closure():
             optimizer.zero_grad()
-
-
+            print("grad")
+            print(obs)
             self.J_train = J(self,obs, inputs.train, inputs)
             self.J_res_train = self.J_train[0]
             self.J_obs_train = torch.tensor([0])
@@ -734,8 +738,9 @@ class MetaModel():
             self.J_obs_F_sigma_train = self.J_train[4]
             self.J_constitutive_train = self.J_train[5]
             #self.J_obs_F_E_train=self.J_train[6]
-            self.J_train = sum(self.J_train)
-            self.J_train.backward(retain_graph=True)
+            self.J_train_tensor=torch.stack(list(self.J_train))
+            self.J_train = torch.sum(self.J_train_tensor)
+            self.J_train.backward(retain_graph=False)
 
 
             # Clipping the gradient to avoid diverging during the training
@@ -746,6 +751,7 @@ class MetaModel():
             nn.utils.clip_grad_norm_(
                 self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
 
+            
 
             # Simple constraint to keep the physical parameter box-constrained
             #A laisser ?
@@ -762,7 +768,7 @@ class MetaModel():
                 self.iter += 1
             return self.J_train
 
-
+ 
         optimizer.step(closure)
 
 

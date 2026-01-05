@@ -65,7 +65,6 @@ class PINN(nn.Module):
     def forward(self, input_tensor):
 
         # Normalization layer
-  
         input_tensor = input_tensor.to(self.device)
         input_tensor = torch.div(
             input_tensor - self.variable_min, self.variable_max - self.variable_min)
