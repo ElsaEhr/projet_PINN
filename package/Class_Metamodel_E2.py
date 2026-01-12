@@ -202,7 +202,7 @@ class MetaModel():
 
 
 
-        def J(metamodel, obs, domain, inputs):
+        def J(metamodel, domain, inputs):
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, domain, is_sigma_trained=metamodel.is_sigma_trained),
                     torch.tensor(0),
                     torch.tensor(0),
@@ -479,7 +479,7 @@ class MetaModel():
                         metamodel, domain, inputs, dic_model, is_sigma_trained=True))
 
 
-        def J_update_sigma(metamodel, domain, train_inputs, inputs):
+        def J_update_sigma(metamodel, domain, inputs):
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, inputs.train, is_sigma_trained=True),
                     torch.tensor(0.),
                     torch.tensor(0.),
@@ -564,8 +564,6 @@ class MetaModel():
                                           tolerance_grad=-1,
                                           tolerance_change=-1)
             self.optim = 'LBFGS'
-            print("cc")
-            print(self.obs)
             self.gradient_descent(J_update_sigma, optimizer, inputs,obs=self.obs)
             iter_theta += 1
 
@@ -728,9 +726,7 @@ class MetaModel():
 
         def closure():
             optimizer.zero_grad()
-            print("grad")
-            print(obs)
-            self.J_train = J(self,obs, inputs.train, inputs)
+            self.J_train = J(self, inputs.train, inputs)
             self.J_res_train = self.J_train[0]
             self.J_obs_train = torch.tensor([0])
             self.J_obs_F_u_train = self.J_train[2]
