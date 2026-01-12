@@ -224,23 +224,49 @@ def J_res(metamodel, domain, is_sigma_trained):
     return 1/domain.shape[0]*torch.norm(div_sigma, p=2)**2
 
 
+def J_obs_F_mod(metamodel, inputs, dic_model):
+    """
+    Loss function for the boundary conditions on the stress field, computed from the estimated strain.
+    """
+    nbr_colloc_points, nbr_hlines = inputs.hlines.size()
+    length = inputs.x_variable_max - inputs.x_variable_min
 
+
+    eval_integral = torch.zeros(nbr_hlines-1)
+    for index_hline in range(1, nbr_hlines):
+
+        
+        sigma_tilde = eps_2_sigma(
+            metamodel, inputs.hlines[:, [0, index_hline]], dic_model, inputs)
+        
+        dx = length / (sigma_tilde[:, 1].shape[0] - 1)
+        
+        eval_integral[index_hline-1] = dx*torch.sum(sigma_tilde[:, 1])
+
+
+    return 1/(nbr_hlines-1) * torch.norm(eval_integral - Fobs*length, 2)**2
 
 
 
 def J_obs_F_u(metamodel, inputs, dic_model):
     """
     Loss function for the boundary conditions on the stress field, computed from the estimated strain.
+
+    Adaptation : changement du calcul de dx car pas meme nobre de points de coloc par ligne
     """
     nbr_colloc_points, nbr_hlines = inputs.hlines.size()
     length = inputs.x_variable_max - inputs.x_variable_min
-    dx = length / (nbr_colloc_points - 1)
 
 
     eval_integral = torch.zeros(nbr_hlines-1)
     for index_hline in range(1, nbr_hlines):
+
+        
         sigma_tilde = eps_2_sigma(
             metamodel, inputs.hlines[:, [0, index_hline]], dic_model, inputs)
+        
+        dx = length / (sigma_tilde[:, 1].shape[0] - 1)
+
         eval_integral[index_hline-1] = dx*torch.sum(sigma_tilde[:, 1])
 
 
