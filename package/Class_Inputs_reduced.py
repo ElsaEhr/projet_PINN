@@ -51,8 +51,7 @@ class Inputs:
 
         [X, Y] = torch.meshgrid(x_grid, y_grid)
 
-        background_grid = torch.hstack(
-            (X.reshape(X.numel(), 1), Y.reshape(Y.numel(), 1)))
+        background_grid = torch.hstack((X.reshape(X.numel(), 1), Y.reshape(Y.numel(), 1)))
         
         roi_y_idx, roi_x_idx = np.where(mask_roi)
 
@@ -91,7 +90,7 @@ class Inputs:
         self.right_BC.requires_grad = True
         self.left_BC.requires_grad = True
 
-        # Get the collocation points on horizontal lines
+
         y_points = torch.linspace(
             self.y_variable_min, self.y_variable_max, nbr_hlines)
 
@@ -102,3 +101,56 @@ class Inputs:
                 (self.hlines, y_points[y_index]*torch.ones(N_coloc_bc[0]).view(-1, 1)))
 
         self.hlines.requires_grad = True
+
+        """
+
+        # Get the collocation points on horizontal lines
+
+        
+        y_points = torch.linspace(
+            self.y_variable_min, self.y_variable_max, nbr_hlines)
+        x_points = torch.linspace(
+            self.x_variable_min, self.x_variable_max, N_coloc[0])
+        
+        #Récupération des points de la grille de base
+        [Xh, Yh] = torch.meshgrid(x_points, y_points)
+        fond_hlines_points = torch.hstack((Xh.reshape(-1, 1), Yh.reshape(-1, 1)))
+
+        #Ajout des points de la région d'intérêt sur ces lignes
+        H_ROI, W_ROI = mask_roi.shape
+
+        y_ratio = (y_points - self.y_variable_min) / (self.y_variable_max - self.y_variable_min)
+        i = (y_ratio * (H_ROI - 1)).round().long()
+        i = torch.clamp(i, 0, H_ROI - 1).numpy()
+
+        #On crée un masque vide et on active seulement les lignes qu'on veut scanner
+        line_selection_mask = np.zeros_like(mask_roi, dtype=bool)
+        line_selection_mask[i, :] = True
+
+        intersection_mask = mask_roi & line_selection_mask
+
+        i_idx, j_idx = np.where(intersection_mask)
+
+        if len(j_idx) > 0:
+            # convertion en rwc
+            ratio_j = j_idx / (W_ROI - 1)
+            ratio_i = i_idx / (H_ROI - 1)
+            
+            x_roi = self.x_variable_min + ratio_j * (self.x_variable_max - self.x_variable_min)
+            y_roi = self.y_variable_min + ratio_i * (self.y_variable_max - self.y_variable_min)
+            
+            roi_hlines_points = torch.tensor(
+                np.column_stack((x_roi, y_roi)), 
+                dtype=torch.float32
+            )
+            
+            #fusion des points de la grille de fond et de la roi
+            self.hlines = torch.vstack((fond_hlines_points, fond_hlines_points))
+        else:
+            self.hlines = fond_hlines_points
+
+
+    
+
+        self.hlines.requires_grad = True
+        """

@@ -149,7 +149,8 @@ class MetaModel():
                                   'obs_F_u': torch.tensor(np.inf).to(self.device),
                                   'BC': torch.tensor(np.inf).to(self.device),
                                   'obs_F_sigma': torch.tensor(np.inf).to(self.device),
-                                  'constitutive': torch.tensor(np.inf).to(self.device)}
+                                  'constitutive': torch.tensor(np.inf).to(self.device),
+                                  'obs_F_DIC':torch.tensor(np.inf).to(self.device)}
 
 
         self.optim = optim
@@ -159,7 +160,7 @@ class MetaModel():
 
         # You can change the values of the lambdas for pre-training here!
         self.lambdas = {'res': 1, 'obs': 1, 'obs_F_u': 1,
-                        'BC': 1, 'obs_F_sigma': 1, 'constitutive': 1}
+                        'BC': 1, 'obs_F_sigma': 1, 'constitutive': 1,'obs_F_DIC':0} #à 0 parce qu'on veut que E change dans le train
 
 
         self.stagnation = []
@@ -183,7 +184,7 @@ class MetaModel():
 
 
 
-    def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1}):
+    def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1,'obs_F_DIC':0}):
         self.lambdas = lambdas
 
         # Normalization of losses if not done already
@@ -230,19 +231,23 @@ class MetaModel():
         self.is_sigma_trained = True
 
 
-    def pretrain_u_blur(self, inputs, I_0_torch, I_t_torch, train_set, liste, pre_train_iter=100, lr=1e-4):
+    def pretrain_u_blur(self, inputs, I_0_torch, I_t_torch, train_set, liste, pre_train_iter=100, lr=1e-4,lambdas={'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0,'obs_F_DIC':1}):
         ''' 
         Supervised learning for u
         Applique un flou à l'image pour stabiliser l'entrainement
         '''
-        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
-                        'BC': 0, 'lines': 0, 'constitutive': 0}
+        self.lambdas = lambdas
         dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
 
         # Normalization of losses if not already done
         if self.normalized_losses['obs'] == np.inf:
             self.normalized_losses['obs'] = Mechanics_model.J_obs(
                 self, dic_model).detach().clone()
+            
+        if self.normalized_losses['obs_F_DIC'] == np.inf:
+            self.normalized_losses['obs_F_DIC'] = Mechanics_model.J_obs_F_DIC(
+                self, inputs,dic_model).detach().clone()
 
 
         def J(metamodel, domain, inputs, dic_model):
@@ -252,7 +257,9 @@ class MetaModel():
                     torch.tensor(0),
                     torch.tensor(0),
                     torch.tensor(0),
-                    torch.tensor(0))
+                    torch.tensor(0),
+                    metamodel.lambdas['obs_F_DIC'] * 1/metamodel.normalized_losses['obs_F_DIC'] *
+                    Mechanics_model.J_obs_F_DIC(metamodel, inputs,dic_model))
 
         
         optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99), weight_decay=1e-5)
@@ -287,10 +294,10 @@ class MetaModel():
 
         
 
-        for E in range(1) : 
+        for epoch in range(1) : 
             self.gradient_descent_u(J, optimizer, inputs, dic_model)
             if self.verbose == 1:
-                print("LFBGS ",E, "Loss: ", self.J_train.item())
+                print("LFBGS ",epoch, "Loss: ", self.J_train.item())
 
         dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
         self.gradient_descent_u(J, optimizer, inputs, dic_model)
@@ -383,8 +390,8 @@ class MetaModel():
                     1/metamodel.normalized_losses['constitutive'] *
                     Mechanics_model.J_constitutive(metamodel, inputs.train, 
                                                 inputs, dic_model, 
-                                                is_E_trained=True)
-                    )
+                                                is_E_trained=True),
+                    torch.tensor(0))
 
         # Optimizer: only parameters of model_E 
         optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
@@ -436,14 +443,15 @@ class MetaModel():
     def train_model(self, inputs, dic_model, alter_steps=10,
                     alter_freq=(50, 50, 50),
                     lambdas_identif_E={'res': 0, 'obs': 0, 'obs_F_u': 1,
-                                       'BC': 0, 'obs_F_sigma': 0, 'constitutive': 1},
+                                       'BC': 0, 'obs_F_sigma': 0, 'constitutive': 1,'obs_F_DIC':0},
                     lambdas_update_sigma={
-                        'res': 0.1, 'obs': 0, 'obs_F_u': 0, 'BC': 0.1, 'obs_F_sigma': 1, 'constitutive': 10},
-                    lambdas_update_u={'res': 0, 'obs': 1, 'obs_F_u': 0, 'BC': 0, 'obs_F_sigma': 0, 'constitutive': 10}):
+                        'res': 0.1, 'obs': 0, 'obs_F_u': 0, 'BC': 0.1, 'obs_F_sigma': 1, 'constitutive': 10,'obs_F_DIC':0},
+                    lambdas_update_u={'res': 0, 'obs': 1, 'obs_F_u': 0, 'BC': 0, 'obs_F_sigma': 0, 'constitutive': 10,'obs_F_DIC':0}):
         """
         Method used for training the model.
         """
-
+        print("dans train model")
+        print(inputs.train.shape)
 
         # Normalization of losses if not done already
         if self.normalized_losses['res'] == np.inf:
@@ -631,6 +639,7 @@ class MetaModel():
             self.J_BC_train = torch.tensor([0])
             self.J_obs_F_sigma_train = torch.tensor([0]) #pourquoi tensor ici et 
             self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=self.J_train[6]
             #self.J_obs_F_E_train=self.J_train[6]
             self.J_train = sum(self.J_train)
             self.J_train.backward(retain_graph=True)
@@ -683,6 +692,7 @@ class MetaModel():
             self.J_BC_train = torch.tensor([0])
             self.J_obs_F_sigma_train = self.J_train[4]
             self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=torch.tensor([0])
             #self.J_obs_F_E_train=self.J_train[6]
             self.J_train = sum(self.J_train)
             self.J_train.backward(retain_graph=True)
@@ -733,6 +743,7 @@ class MetaModel():
             self.J_BC_train = self.J_train[3]
             self.J_obs_F_sigma_train = self.J_train[4]
             self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=torch.tensor([0])
             #self.J_obs_F_E_train=self.J_train[6]
             self.J_train_tensor=torch.stack(list(self.J_train))
             self.J_train = torch.sum(self.J_train_tensor)
@@ -777,7 +788,7 @@ class MetaModel():
         self.list_J_train.append([self.J_train.item(), self.J_res_train.item(),
                                   self.J_obs_train.item(), self.J_obs_F_u_train.item(),
                                   self.J_BC_train.item(), self.J_obs_F_sigma_train.item(),
-                                  self.J_constitutive_train.item()]) #ajout de self.J_obs_F_E_train.item()
+                                  self.J_constitutive_train.item(),self.J_obs_F_DIC.item()]) #ajout de self.J_obs_F_E_train.item()
 
 
         self.J_train = self.J_train.detach().clone()
@@ -787,6 +798,7 @@ class MetaModel():
         self.J_BC_train = self.J_BC_train.detach().clone()
         self.J_obs_F_sigma_train = self.J_obs_F_sigma_train.detach().clone()
         self.J_constitutive_train = self.J_constitutive_train.detach().clone()
+        self.J_obs_F_DIC=self.J_obs_F_DIC.detach().clone()
         #self.J_obs_F_E_train=self.J_obs_F_E_train.detach.clone() #ajout ici aussi
 
         if self.optim == "LBFGS":
