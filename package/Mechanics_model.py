@@ -192,7 +192,7 @@ def eps_2_sigma(metamodel, domain, dic_model):
                          sigma_yy.view(-1, 1),
                          sigma_xy.view(-1, 1)))
 
-def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim=10):
+def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim_inclusion=60000, E_estim_fond=3000):
     """
     Compute the stress from the estimated strain with the 2D in plane stress constitutive law
     """
@@ -200,7 +200,7 @@ def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim=10):
 
     gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
 
-    E=torch.ones(gl.shape)*E_estim
+    E = torch.where(gl >= 128, E_estim_inclusion,  E_estim_fond)
 
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
@@ -212,6 +212,7 @@ def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim=10):
                          sigma_yy.view(-1, 1),
                          sigma_xy.view(-1, 1)))
 
+#ajouter J_res_u ?
 
 def J_res(metamodel, domain, is_sigma_trained):
     """
@@ -222,15 +223,15 @@ def J_res(metamodel, domain, is_sigma_trained):
     sigma_tilde = Fobs*is_sigma_trained * \
         metamodel.model_sigma(domain) + (1-is_sigma_trained) * \
         metamodel.model_sigma(domain)
-    grad_sigma_xx = torch.autograd.grad(sigma_tilde[:, 0], domain,
+    grad_sigma_xx = torch.autograd.grad(sigma_tilde[:, 0], domain, #xx
                                         grad_outputs=torch.ones_like(
                                             sigma_tilde[:, 0]),
                                         create_graph=True, retain_graph=True)[0]
-    grad_sigma_yy = torch.autograd.grad(sigma_tilde[:, 1], domain,
+    grad_sigma_yy = torch.autograd.grad(sigma_tilde[:, 1], domain, #yy
                                         grad_outputs=torch.ones_like(
                                             sigma_tilde[:, 1]),
                                         create_graph=True, retain_graph=True)[0]
-    grad_sigma_xy = torch.autograd.grad(sigma_tilde[:, 2], domain,
+    grad_sigma_xy = torch.autograd.grad(sigma_tilde[:, 2], domain, #xy
                                         grad_outputs=torch.ones_like(
                                             sigma_tilde[:, 2]),
                                         create_graph=True, retain_graph=True)[0]
@@ -241,7 +242,7 @@ def J_res(metamodel, domain, is_sigma_trained):
     return 1/domain.shape[0]*torch.norm(div_sigma, p=2)**2
 
 
-def J_obs_F_DIC(metamodel, inputs,dic_model):
+def J_obs_F_DIC(metamodel, inputs,dic_model,E_estim_inclusion=5000, E_estim_fond=5000):
     """
     Loss function for the boundary conditions on the stress field, computed from the estimated strain.
     """
@@ -249,13 +250,12 @@ def J_obs_F_DIC(metamodel, inputs,dic_model):
     length = inputs.x_variable_max - inputs.x_variable_min
     dx = length / (nbr_colloc_points - 1)
 
-    E=10
 
     eval_integral = torch.zeros(nbr_hlines-1)
     for index_hline in range(1, nbr_hlines):
 
         
-        sigma_tilde = eps_2_sigma_E_const(metamodel, inputs.hlines[:, [0, index_hline]],dic_model,E)
+        sigma_tilde = eps_2_sigma_E_const(metamodel, inputs.hlines[:, [0, index_hline]],dic_model,E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond)
         
         eval_integral[index_hline-1] = dx*torch.sum(sigma_tilde[:, 1])
 

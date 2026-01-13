@@ -232,7 +232,7 @@ class MetaModel():
 
 
     def pretrain_u_blur(self, inputs, I_0_torch, I_t_torch, train_set, liste, pre_train_iter=100, lr=1e-4,lambdas={'res': 0, 'obs': 1, 'obs_F': 0,
-                        'BC': 0, 'lines': 0, 'constitutive': 0,'obs_F_DIC':1}):
+                        'BC': 0, 'lines': 0, 'constitutive': 0,'obs_F_DIC':1},E_estim_inclusion=5000, E_estim_fond=5000):
         ''' 
         Supervised learning for u
         Applique un flou à l'image pour stabiliser l'entrainement
@@ -247,7 +247,7 @@ class MetaModel():
             
         if self.normalized_losses['obs_F_DIC'] == np.inf:
             self.normalized_losses['obs_F_DIC'] = Mechanics_model.J_obs_F_DIC(
-                self, inputs,dic_model).detach().clone()
+                self, inputs,dic_model,E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond).detach().clone()
 
 
         def J(metamodel, domain, inputs, dic_model):
@@ -259,7 +259,7 @@ class MetaModel():
                     torch.tensor(0),
                     torch.tensor(0),
                     metamodel.lambdas['obs_F_DIC'] * 1/metamodel.normalized_losses['obs_F_DIC'] *
-                    Mechanics_model.J_obs_F_DIC(metamodel, inputs,dic_model))
+                    Mechanics_model.J_obs_F_DIC(metamodel, inputs,dic_model, E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond))
 
         
         optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99), weight_decay=1e-5)
