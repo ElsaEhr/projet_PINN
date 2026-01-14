@@ -213,6 +213,30 @@ def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim_inclusion=60000, E_
                          sigma_xy.view(-1, 1)))
 
 #ajouter J_res_u ?
+#======Tentative perso de création de J_res_u================ 
+def J_res_u(metamodel, domain, dic_model): 
+    """ Residual loss enforcing div(C(E) : epsilon(u)) = 0 Plane stress, 2D """ 
+    
+    eps = epsilon(metamodel, domain) 
+    gl = dic_model.get_gl_from_rwc(domain)[:, 0].view(-1, 1) 
+    E = metamodel.model_E(gl) 
+    
+    sigma_xx = E / (1 - nu**2) * (eps[:, 0] + nu * eps[:, 1]) 
+    sigma_yy = E / (1 - nu**2) * (nu * eps[:, 0] + eps[:, 1]) 
+    sigma_xy = E / (1 + nu) * eps[:, 2] 
+    
+    grad_sigma_xx = torch.autograd.grad( sigma_xx, domain, grad_outputs=torch.ones_like(sigma_xx), 
+                                        create_graph=True, retain_graph=True )[0] 
+    grad_sigma_yy = torch.autograd.grad( sigma_yy, domain, grad_outputs=torch.ones_like(sigma_yy), 
+                                        create_graph=True, retain_graph=True )[0] 
+    grad_sigma_xy = torch.autograd.grad( sigma_xy, domain, grad_outputs=torch.ones_like(sigma_xy), 
+                                        create_graph=True, retain_graph=True )[0] 
+    
+    div_sigma_x = grad_sigma_xx[:, 0] + grad_sigma_xy[:, 1] 
+    div_sigma_y = grad_sigma_xy[:, 0] + grad_sigma_yy[:, 1] 
+    div_sigma = torch.hstack(( div_sigma_x.view(-1, 1), div_sigma_y.view(-1, 1) )) 
+    
+    return torch.mean(div_sigma**2)
 
 def J_res(metamodel, domain, is_sigma_trained):
     """
