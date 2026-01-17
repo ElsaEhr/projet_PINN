@@ -214,22 +214,26 @@ def eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim_inclusion=60000, E_
 
 #ajouter J_res_u ?
 #======Tentative perso de création de J_res_u================ 
-def J_res_u(metamodel, domain, dic_model): 
+def J_res_u(metamodel, domain, dic_model,E_estim_inclusion=60000, E_estim_fond=3000): 
     """ Residual loss enforcing div(C(E) : epsilon(u)) = 0 Plane stress, 2D """ 
     
-    eps = epsilon(metamodel, domain) 
-    gl = dic_model.get_gl_from_rwc(domain)[:, 0].view(-1, 1) 
-    E = metamodel.model_E(gl) 
+    #eps = epsilon(metamodel, domain) 
+    #gl = dic_model.get_gl_from_rwc(domain)[:, 0].view(-1, 1) 
+    #E = metamodel.model_E(gl) 
     
+    sigma_tilde =eps_2_sigma_E_const(metamodel, domain,dic_model, E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond)
+    
+    """
     sigma_xx = E / (1 - nu**2) * (eps[:, 0] + nu * eps[:, 1]) 
     sigma_yy = E / (1 - nu**2) * (nu * eps[:, 0] + eps[:, 1]) 
     sigma_xy = E / (1 + nu) * eps[:, 2] 
-    
-    grad_sigma_xx = torch.autograd.grad( sigma_xx, domain, grad_outputs=torch.ones_like(sigma_xx), 
+    """
+
+    grad_sigma_xx = torch.autograd.grad(sigma_tilde[:, 0], domain, grad_outputs=torch.ones_like(sigma_tilde[:, 0]), 
                                         create_graph=True, retain_graph=True )[0] 
-    grad_sigma_yy = torch.autograd.grad( sigma_yy, domain, grad_outputs=torch.ones_like(sigma_yy), 
+    grad_sigma_yy = torch.autograd.grad(sigma_tilde[:, 1], domain, grad_outputs=torch.ones_like(sigma_tilde[:, 1]), 
                                         create_graph=True, retain_graph=True )[0] 
-    grad_sigma_xy = torch.autograd.grad( sigma_xy, domain, grad_outputs=torch.ones_like(sigma_xy), 
+    grad_sigma_xy = torch.autograd.grad(sigma_tilde[:, 2], domain, grad_outputs=torch.ones_like(sigma_tilde[:, 2]), 
                                         create_graph=True, retain_graph=True )[0] 
     
     div_sigma_x = grad_sigma_xx[:, 0] + grad_sigma_xy[:, 1] 
