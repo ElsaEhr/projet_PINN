@@ -181,7 +181,7 @@ def eps_2_sigma(metamodel, domain, dic_model):
 
     gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
 
-    E=metamodel.model_E(gl) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+    E = metamodel.model_E(gl.view(-1, 1).float() / 255.0) #metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
     sigma_xx = E/(1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
     sigma_yy = E/(1-nu**2) * (nu*epsilon_tilde[:, 0] + epsilon_tilde[:, 1])
@@ -347,6 +347,18 @@ def J_BC(metamodel, inputs, is_sigma_trained):
     return result
 
 
+def J_E_obs(metamodel, domain, dic_model, f_E):
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
+    
+    E = metamodel.model_E(gl.view(-1, 1).float() / 255.0)
+    
+    f_E_tensor = torch.tensor(f_E, device=E.device, dtype=E.dtype)
+
+    E_obs = f_E_tensor[gl.long()].view(-1, 1) #calcule le vecteur E_obs, sachant que f_E est le vecteur tel que pour le niveau de gris [i], on a que E_obs[i]=f_E[gl[i]]
+    
+    return torch.nn.functional.mse_loss(E, E_obs)
+
+
 
 def J_obs_F_sigma(metamodel, inputs, is_sigma_trained):
     """
@@ -422,7 +434,34 @@ def J_constitutive(metamodel, domain, inputs,dic_model, is_sigma_trained,weigths
     
     #CHANGEMENT POUR E
     gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
-    E=metamodel.model_E(gl)
+    E = metamodel.model_E(gl.view(-1, 1).float() / 255.0)
+
+    #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
+
+
+    relation_1 = sigma_tilde[:, 0] - E / \
+        (1-nu**2) * (epsilon_tilde[:, 0] + nu*epsilon_tilde[:, 1])
+    relation_2 = sigma_tilde[:, 1] - E / \
+        (1-nu**2) * (nu*epsilon_tilde[:, 0] + epsilon_tilde[:, 1])
+    relation_3 = sigma_tilde[:, 2] - E/(1+nu) * epsilon_tilde[:, 2]
+
+
+    return 1/domain.shape[0] * (weigths['eps_xx']*torch.norm(relation_1, p=2)**2 + weigths['eps_yy']*torch.norm(relation_2, p=2)**2 + weigths['eps_xy']*torch.norm(relation_3, p=2)**2)
+
+
+
+def J_constitutiveE(metamodel, domain, inputs,dic_model, is_sigma_trained,weigths={'eps_xx': 1, 'eps_yy': 1, 'eps_xy': 1},E_estim_inclusion=5000, E_estim_fond=5000): #add dic model to obtain gray scale levels
+    """
+    Loss function for the constitutive relation between the strain and the stress
+    """
+    epsilon_tilde = epsilon(metamodel, domain)
+    sigma_tilde = Fobs*is_sigma_trained * \
+        metamodel.model_sigma(domain) + (1-is_sigma_trained) * \
+        metamodel.model_sigma(domain)
+    
+    #CHANGEMENT POUR E
+    gl=dic_model.get_gl_from_rwc(domain)[:,0].view(-1, 1)
+    E = torch.where(gl >= 128, E_estim_inclusion,  E_estim_fond)
 
     #E = metamodel.E_ref * E_function(domain, metamodel.E, metamodel, inputs)
 
