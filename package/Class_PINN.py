@@ -30,6 +30,7 @@ class PINN(nn.Module):
             [inputs.x_variable_max, inputs.y_variable_max])
 
         self.hidden = nn.ModuleList().to(self.device)
+        self.norms = nn.ModuleList().to(self.device)
         self.layers = layers
         self.activation = activation
 
@@ -46,9 +47,10 @@ class PINN(nn.Module):
                 self.layers[0] * (2 * self.N_FF + 1), self.layers[1], bias=True)
         else:
             input_layer = nn.Linear(self.layers[0], self.layers[1], bias=True)
-        nn.init.xavier_normal_(input_layer.weight.data, gain=1.0)
+        nn.init.xavier_normal_(input_layer.weight.data, gain=1.0) #but garder variance constante, éviter l'exploging et le vanishing gradient, particulièrement adapté aux PINNs
         nn.init.zeros_(input_layer.bias.data)
         self.hidden.append(input_layer)
+        self.norms.append(None)
 
         # Hidden layers
         for i, (input_size, output_size) in enumerate(zip(self.layers[1:-1], self.layers[2:-1])):
@@ -56,11 +58,13 @@ class PINN(nn.Module):
             nn.init.xavier_normal_(linear.weight.data, gain=1.0)
             nn.init.zeros_(linear.bias.data)
             self.hidden.append(linear)
+            self.norms.append(nn.LayerNorm(output_size))
 
         # Output layer
         output_layer = nn.Linear(self.layers[-2], self.layers[-1], bias=False)
         nn.init.xavier_normal_(output_layer.weight.data, gain=1.0)
         self.hidden.append(output_layer)
+        self.norms.append(None)
 
     def forward(self, input_tensor):
 
@@ -83,10 +87,13 @@ class PINN(nn.Module):
             input_tensor.to(self.device)
 
 
-        for (l, linear_transform) in zip(range(len(self.hidden)), self.hidden):
+        for (l, linear_transform,norm) in zip(range(len(self.hidden)), self.hidden ,self.norms):
             # For input and hidden layers, apply activation function after linear transformation
-            if l < len(self.hidden) - 1:
+            if l==0:
                 input_tensor = self.activation(linear_transform(input_tensor))
+            
+            elif l < len(self.hidden) - 1:
+                input_tensor = self.activation(norm(linear_transform(input_tensor)))
 
             # For output layer, apply only linear transformation
             else:

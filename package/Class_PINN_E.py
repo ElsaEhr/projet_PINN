@@ -7,7 +7,7 @@ class PINN_E(nn.Module):
     This is the PINN class, the Neural Network will be defined as a instance of that class. 
     """
 
-    def __init__(self, device, inputs, layers, activation=nn.Tanh(), optim="Adam",
+    def __init__(self, device, inputs, layers, activation=nn.ReLU(), optim="Adam",
                  Fourier_features=False,
                  seed=None, verbose=0, N_FF=5,
                  sigma_FF=1, optim_freq=0):

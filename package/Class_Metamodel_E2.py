@@ -9,6 +9,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import torchvision.transforms.functional as F
 from package.Class_DIC import DIC
+from math import floor
 
 from copy import deepcopy
 
@@ -70,8 +71,6 @@ class MetaModel():
         activation_E = nn.ReLU()
         #activation_E = nn.Tanh() on tente juste pour voir
         #optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
-
-        print("model E")
 
         self.model_E = PINN_E(device, inputs, layers_E, activation_E, optim,
                             Fourier_features=False, 
@@ -208,14 +207,11 @@ class MetaModel():
             return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, domain, is_sigma_trained=metamodel.is_sigma_trained),
                     torch.tensor(0),
                     torch.tensor(0),
-                    metamodel.lambdas['BC'] * 1/metamodel.normalized_losses['BC'] * Mechanics_model.J_BC(
-                        metamodel, inputs, is_sigma_trained=metamodel.is_sigma_trained),
-                    metamodel.lambdas['obs_F_sigma'] * 1/metamodel.normalized_losses['obs_F_sigma'] *
-                    Mechanics_model.J_obs_F_sigma(
-                        self, inputs, is_sigma_trained=self.is_sigma_trained),
-                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
-                    Mechanics_model.J_constitutive(
-                        self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained))
+                    metamodel.lambdas['BC'] * 1/metamodel.normalized_losses['BC'] * Mechanics_model.J_BC(metamodel, inputs, is_sigma_trained=metamodel.is_sigma_trained),
+                    metamodel.lambdas['obs_F_sigma'] * 1/metamodel.normalized_losses['obs_F_sigma'] *Mechanics_model.J_obs_F_sigma(self, inputs, is_sigma_trained=self.is_sigma_trained),
+                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *Mechanics_model.J_constitutive(self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained),
+                    torch.tensor(0),
+                    torch.tensor(0),)
 
 
         optimizer = torch.optim.Adam(self.model_sigma.parameters())
@@ -259,8 +255,7 @@ class MetaModel():
 
         def J(metamodel, domain, inputs, dic_model):
             return (torch.tensor(0),
-                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
-                    Mechanics_model.J_obs(metamodel, dic_model),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *Mechanics_model.J_obs(metamodel, dic_model),
                     torch.tensor(0),
                     torch.tensor(0),
                     torch.tensor(0),
@@ -273,7 +268,7 @@ class MetaModel():
         
         optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99), weight_decay=1e-5)
         self.optim = 'Adam'
-        scheduler=torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+        scheduler=torch.optim.lr_scheduler.StepLR(optimizer, step_size=350, gamma=0.1)
 
         sigma0=5/0.8
         sigma=sigma0
@@ -295,9 +290,10 @@ class MetaModel():
                       " Loss: ", self.J_train.item())
             #if self.J_train.item()<0.53 :
                 #break
-            scheduler.step(self.J_train.item())
+            scheduler.step()#self.J_train.item())
+            print(scheduler.get_last_lr())
 
-
+        """
         optimizer = torch.optim.LBFGS(self.model_u.parameters(), lr=1, line_search_fn="strong_wolfe",max_iter=5)
         self.optim = 'LFBGS'
 
@@ -307,7 +303,7 @@ class MetaModel():
             self.gradient_descent_u(J, optimizer, inputs, dic_model)
             if self.verbose == 1:
                 print("LFBGS ",epoch, "Loss: ", self.J_train.item())
-
+        """
         dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
         self.gradient_descent_u(J, optimizer, inputs, dic_model)
         print(" Loss: ", self.J_train.item())
@@ -370,7 +366,7 @@ class MetaModel():
     #=======================TENTATIVE DE PRETRAIN DU E==================================
 
     def pretrain_E(self, inputs, dic_model, pre_train_iter=100, 
-               lambdas={'res': 1, 'constitutive': 1}):
+               lambdas={'obs_F_u': 1, 'constitutive': 1}):
         """
         Pretrain the material parameters E using physics-only losses
         (residual + constitutive).
@@ -378,28 +374,34 @@ class MetaModel():
 
         self.lambdas = lambdas
 
+        #J_res does not depend on E
         # Normalization of losses 
-        if self.normalized_losses['res'] == np.inf:
-            self.normalized_losses['res'] = Mechanics_model.J_res(
-                self, inputs.train, is_E_trained=True).detach().clone()
+        #if self.normalized_losses['res'] == np.inf:
+        #    self.normalized_losses['res'] = Mechanics_model.J_res(
+        #        self, inputs.train, is_sigma_trained=True).detach().clone()
+
+        if self.normalized_losses['obs_F_u'] == np.inf:
+            self.normalized_losses['obs_F_u'] = Mechanics_model.J_obs_F_u(
+                self, inputs,dic_model).detach().clone()
 
         if self.normalized_losses['constitutive'] == np.inf:
             self.normalized_losses['constitutive'] = Mechanics_model.J_constitutive(
-                self, inputs.train, inputs, dic_model, is_E_trained=True).detach().clone()
+                self, inputs.train, inputs, dic_model, is_sigma_trained=True).detach().clone()
 
         # Loss function for E pretraining
-        def J(metamodel, obs, domain, inputs):
-            return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] *
-                    Mechanics_model.J_res(metamodel, domain, is_E_trained=True),
+        def J(metamodel, domain, inputs, dic_model=dic_model):
+            return (torch.tensor(0),#metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] *Mechanics_model.J_res(metamodel, domain, is_sigma_trained=True),
 
                     torch.tensor(0),   # obs (only for u)
-                    torch.tensor(0),   # obs_F (only for sigma)
+                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *Mechanics_model.J_obs_F_u(self, inputs,dic_model),   # obs_F (only for sigma)
                     torch.tensor(0),   # BC (not needed for E pretraining)
                     metamodel.lambdas['constitutive'] * 
                     1/metamodel.normalized_losses['constitutive'] *
                     Mechanics_model.J_constitutive(metamodel, inputs.train, 
                                                 inputs, dic_model, 
                                                 is_E_trained=True),
+                    torch.tensor(0),
+                    torch.tensor(0),   # obs (only for u)
                     torch.tensor(0))
 
         # Optimizer: only parameters of model_E 
@@ -415,6 +417,31 @@ class MetaModel():
 
         self.is_E_trained = True
 
+
+    def pretrain_E_lin(self, inputs, dic_model, pre_train_iter=100, Emin=3000, Emax=60000):
+        """
+        On apprends un E linéaire entre le blanc et le noir
+        """
+        #fonction cible linéaire
+        f_E=torch.linspace(Emin,Emax,256)
+
+        # Optimizer: only parameters of model_E 
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
+
+             
+        #descente de gradient simple
+        for epoch in range(pre_train_iter):
+        
+            optimizer.zero_grad()
+            gl_random = torch.randint(low=0, high=256, size=(100,))
+            loss = Mechanics_model.J_E_obs(self.model_E, gl_random, dic_model, f_E)
+            loss.backward()
+            optimizer.step()
+        
+            print(f"Epoch {epoch:4d} | Loss: {loss.item():.6f}")
+
+        self.is_E_trained = True
                 
 
     """
@@ -485,15 +512,13 @@ class MetaModel():
 
         def J_update_u(metamodel, domain, inputs, dic_model):
             return (torch.tensor(0.),
-                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
-                    Mechanics_model.J_obs(metamodel, dic_model),
-                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *
-                    Mechanics_model.J_obs_F_u(self, inputs,dic_model),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *Mechanics_model.J_obs(metamodel, dic_model),
+                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *Mechanics_model.J_obs_F_u(self, inputs,dic_model),
                     torch.tensor(0.),
                     torch.tensor(0.),
-                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
-                    Mechanics_model.J_constitutive(
-                        metamodel, domain, inputs, dic_model, is_sigma_trained=True))
+                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *Mechanics_model.J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
 
 
         def J_update_sigma(metamodel, domain, inputs):
@@ -508,7 +533,9 @@ class MetaModel():
                         self, inputs, is_sigma_trained=self.is_sigma_trained),
                     metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
                     Mechanics_model.J_constitutive(
-                        metamodel, domain, inputs , dic_model, is_sigma_trained=True))
+                        metamodel, domain, inputs , dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
 
 
         def J_identif_E(metamodel, domain, inputs):
@@ -520,7 +547,9 @@ class MetaModel():
                     torch.tensor(0),
                     metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
                     Mechanics_model.J_constitutive(
-                        metamodel, domain, inputs, dic_model, is_sigma_trained=True))
+                        metamodel, domain, inputs, dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
 
 
         # Alternating minimization
@@ -774,9 +803,10 @@ class MetaModel():
 
             # Simple constraint to keep the physical parameter box-constrained
             #A laisser ?
-            with torch.no_grad():
-                self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
-                # print('E clamped')
+            #with torch.no_grad():
+            #    self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+             #   print('E clamped')
+              #  print(self.E)
 
 
             self.iter_eval += 1
