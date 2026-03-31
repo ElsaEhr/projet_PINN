@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class PINN(nn.Module):
+class PINN_E(nn.Module):
     """
     This is the PINN class, the Neural Network will be defined as a instance of that class. 
     """
@@ -15,7 +15,7 @@ class PINN(nn.Module):
         Initialization of the PINN, with the number of layers and the first guess for the physical parameter. 
         """
 
-        super(PINN, self).__init__()
+        super(PINN_E, self).__init__()
 
         # Seed for initialization reproductibility
         if seed is not None:
@@ -24,10 +24,9 @@ class PINN(nn.Module):
         self.device = device  # Device specification
         self.input_save = inputs
 
-        self.variable_min = torch.tensor(
-            [inputs.x_variable_min, inputs.y_variable_min])
-        self.variable_max = torch.tensor(
-            [inputs.x_variable_max, inputs.y_variable_max])
+
+        self.variable_min = 0
+        self.variable_max = 255
 
         self.hidden = nn.ModuleList().to(self.device)
         self.layers = layers
@@ -69,6 +68,7 @@ class PINN(nn.Module):
         input_tensor = torch.div(
             input_tensor - self.variable_min, self.variable_max - self.variable_min)
         
+
 
         # Fourier features
         if self.Fourier_features:

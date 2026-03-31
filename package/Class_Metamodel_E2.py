@@ -1,0 +1,996 @@
+import torch
+import torch.nn as nn
+import numpy as np
+import package.display as display
+import package.Mechanics_model as Mechanics_model
+from package.Class_PINN import PINN
+from package.Class_PINN_E import PINN_E
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import torchvision.transforms.functional as F
+from package.Class_DIC import DIC
+from math import floor
+
+from copy import deepcopy
+
+
+
+
+class MetaModel():
+    """
+    This is the MetaModel class, the PINNs representing the displacement and the stress will be defined as a instance of that class.
+    This class allows the proper initialisation and training of the PINNs as well as identifying the unknown parameters 
+    """
+
+
+    def __init__(self, device, inputs, layers, layersE, E_0, E_ref, E_interpolation, n_E=10, activation=nn.Tanh(), optim="Adam",
+                 Fourier_features=False, initial_freqs=torch.tensor([]),
+                 seed=None, verbose=0, obs='rien',
+                 N_FF=5,
+                 sigma_FF_u=1, sigma_FF_sigma=1, optim_freq=0, iter_LFBGS_altern=None, Efunc=None):
+        """
+        Initialization of the PINN, with the number of layers and the first guess for the physical parameter. 
+        """
+
+
+        # Seed for initialization reproductibility
+        if seed is not None:
+            torch.manual_seed(seed)
+
+
+        self.device = device  # Device specification
+        self.input_save = inputs
+        self.obs = obs
+        
+        # Initialize the PINNs for u and sigma
+        layers_u = deepcopy(layers)
+        layers_u.append(2)  # the output of u is u_x and u_y
+
+
+        layers_sigma = deepcopy(layers)
+        # the output of sigma is sigma_xx, sigma_yy, sigma_xy
+        layers_sigma.append(3)
+
+
+        self.model_u = PINN(device, inputs, layers_u, activation, optim,
+                            Fourier_features,
+                            seed, verbose, N_FF,
+                            sigma_FF_u, optim_freq)
+
+
+        self.model_sigma = PINN(device, inputs, layers_sigma, activation, optim,
+                                Fourier_features,
+                                seed, verbose, N_FF,
+                                sigma_FF_sigma, optim_freq=optim_freq)
+
+
+                #NN pour E
+        
+        layers_E = deepcopy(layersE) #[256,256]
+        layers_E.append(1)
+        activation_E = nn.ReLU()
+        #activation_E = nn.Tanh() on tente juste pour voir
+        #optim_E = torch.optim.AdamW(self.model_E.parameters(), lr=1e-4, weight_decay=1e-4)
+
+        self.model_E = PINN_E(device, inputs, layers_E, activation_E, optim,
+                            Fourier_features=False, 
+                            seed=seed, verbose=verbose, N_FF=N_FF,
+                            sigma_FF=1, optim_freq=optim_freq)
+
+        self.E_ref = E_ref
+        self.E = E_0.float().to(self.device)/self.E_ref     # Transférer E_0 au GPU
+        self.E_0 = E_0.detach().clone().to(self.device)       # Transférer E_0 au GPU
+        self.E.requires_grad = True
+
+        """
+        FEM initialisation
+        # Verify the consistency of dimension
+        assert (n_E[0]+1)*(n_E[1]+1) == self.E.shape[0]
+        # Create the mesh for the interpolation for E
+        self.mesh_E = Mechanics_model.create_mesh_E(inputs, n_E)
+        self.n_E = n_E
+        self.E_interpolation = E_interpolation
+        self.Efunc = Efunc
+        if not (Efunc is None):
+            self.E_solution = Efunc(torch.from_numpy(self.mesh_E.nodes))
+
+
+        self.iter_LFBGS_altern = iter_LFBGS_altern
+        """
+
+        self.Efunc = None
+
+        # Lists initialization
+        self.list_J_train = []
+        self.list_J_test = []
+
+
+        self.list_y = []
+
+
+        self.list_grad = []
+        self.list_J_gradients = []
+
+
+        self.list_params = []
+
+
+        self.list_LBFGS_n_iter = []
+        self.list_iter_flag = []
+
+
+        self.list_theta_optim = []
+        self.list_E_optim = []
+        self.list_res_optim = []
+
+
+        self.list_lr = []
+
+
+        self.list_k = []
+        self.list_grad_k = []
+        self.list_E_matrix = []
+
+
+        self.iter = 0
+        self.iter_eval = 0
+        self.alter_iter = 0
+
+
+        self.list_subdomains = []
+
+
+        self.end_training = False
+
+
+        self.normalized_losses = {'res': torch.tensor(np.inf).to(self.device),
+                                  'obs': torch.tensor(np.inf).to(self.device),
+                                  'obs_F_u': torch.tensor(np.inf).to(self.device),
+                                  'BC': torch.tensor(np.inf).to(self.device),
+                                  'obs_F_sigma': torch.tensor(np.inf).to(self.device),
+                                  'constitutive': torch.tensor(np.inf).to(self.device),
+                                  'obs_F_DIC':torch.tensor(np.inf).to(self.device),
+                                  'res_u':torch.tensor(np.inf).to(self.device),
+                                  'constitutiveE':torch.tensor(np.inf).to(self.device)}
+
+
+        self.optim = optim
+        self.verbose = verbose  # 1 all, 0 nothing
+        self.is_sigma_trained = False
+      
+
+        # You can change the values of the lambdas for pre-training here!
+        self.lambdas = {'res': 1, 'obs': 1, 'obs_F_u': 1,
+                        'BC': 1, 'obs_F_sigma': 1, 'constitutive': 1,'obs_F_DIC':0,'res_u':0,'constitutiveE':0} #à 0 parce qu'on veut que E change dans le train
+
+
+        self.stagnation = []
+
+
+    def save_model(self, model, path):
+        if model == 'sigma':
+            torch.save(self.model_sigma, path)
+        else:
+            torch.save(self.model_u, path)
+
+
+    def load_model(self, model, path):
+        if model == 'sigma':
+            self.model_sigma = torch.load(path)
+        else:
+            self.model_u = torch.load(path)
+
+
+    """
+    def pretrain_sigma(self, inputs, dic_model, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1,'obs_F_DIC':0,'res_u':0,}):
+        self.lambdas = lambdas
+
+        # Normalization of losses if not done already
+        if self.normalized_losses['res'] == np.inf:
+            self.normalized_losses['res'] = Mechanics_model.J_res(
+                self, inputs.train, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['BC'] == np.inf:
+            self.normalized_losses['BC'] = Mechanics_model.J_BC(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['obs_F_sigma'] == np.inf:
+            self.normalized_losses['obs_F_sigma'] = Mechanics_model.J_obs_F_sigma(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['constitutive'] == np.inf:
+            self.normalized_losses['constitutive'] = Mechanics_model.J_constitutive(
+                self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained).detach().clone()
+    """
+
+    def pretrain_sigma(self, inputs, dic_model,E_estim_inclusion, E_estim_fond, lr, pre_train_iter=100, lambdas={'res': 1, 'obs': 0, 'obs_F': 0, 'BC': 1, 'lines': 1,'obs_F_sigma': 1, 'constitutive': 1,'obs_F_DIC':0,'res_u':0,'constitutiveE': 1}):
+        self.lambdas = lambdas
+
+        # Normalization of losses if not done already
+        if self.normalized_losses['res'] == np.inf:
+            self.normalized_losses['res'] = Mechanics_model.J_res(
+                self, inputs.train, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['BC'] == np.inf:
+            self.normalized_losses['BC'] = Mechanics_model.J_BC(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['obs_F_sigma'] == np.inf:
+            self.normalized_losses['obs_F_sigma'] = Mechanics_model.J_obs_F_sigma(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['constitutiveE'] == np.inf:
+            self.normalized_losses['constitutiveE'] = Mechanics_model.J_constitutiveE(
+                self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained,).detach().clone()
+
+
+
+        def J(metamodel, domain, inputs):
+            return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, domain, is_sigma_trained=metamodel.is_sigma_trained),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    metamodel.lambdas['BC'] * 1/metamodel.normalized_losses['BC'] * Mechanics_model.J_BC(metamodel, inputs, is_sigma_trained=metamodel.is_sigma_trained),
+                    metamodel.lambdas['obs_F_sigma'] * 1/metamodel.normalized_losses['obs_F_sigma'] *Mechanics_model.J_obs_F_sigma(self, inputs, is_sigma_trained=self.is_sigma_trained),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    metamodel.lambdas['constitutiveE'] * 1/metamodel.normalized_losses['constitutiveE'] *Mechanics_model.J_constitutiveE(self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained,E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond))
+
+
+        optimizer = torch.optim.Adam(self.model_sigma.parameters(),lr=lr)
+        self.optim = 'Adam'
+
+  
+        for epoch in range(pre_train_iter):
+            self.gradient_descent_sigma(J, optimizer, inputs, obs=self.obs)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                      " Loss: ", self.J_train.item())
+
+
+        self.is_sigma_trained = True
+
+
+    def pretrain_u_blur(self, inputs, I_0_torch, I_t_torch, train_set, liste, pre_train_iter=100, lr=1e-4,lambdas={'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0,'obs_F_DIC':1,'res_u':1},E_estim_inclusion=5000, E_estim_fond=5000):
+        ''' 
+        Supervised learning for u
+        Applique un flou à l'image pour stabiliser l'entrainement
+        '''
+        self.lambdas = lambdas
+        dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
+
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs'] == np.inf:
+            self.normalized_losses['obs'] = Mechanics_model.J_obs(
+                self, dic_model).detach().clone()
+            
+        if self.normalized_losses['obs_F_DIC'] == np.inf:
+            self.normalized_losses['obs_F_DIC'] = Mechanics_model.J_obs_F_DIC(
+                self, inputs,dic_model,E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond).detach().clone()
+            
+        if self.normalized_losses['res_u'] == np.inf:
+            self.normalized_losses['res_u'] = Mechanics_model.J_res_u(
+                self, inputs.train,dic_model,E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond).detach().clone()
+            
+        
+
+
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    metamodel.lambdas['obs_F_DIC'] * 1/metamodel.normalized_losses['obs_F_DIC'] *
+                    Mechanics_model.J_obs_F_DIC(metamodel, inputs,dic_model, E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond),
+                    metamodel.lambdas['res_u'] * 1/metamodel.normalized_losses['res_u'] *
+                    Mechanics_model.J_res_u(metamodel, domain,dic_model, E_estim_inclusion=E_estim_inclusion, E_estim_fond=E_estim_fond),
+                    torch.tensor(0))
+
+        
+        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99), weight_decay=1e-5)
+        self.optim = 'Adam'
+        scheduler=torch.optim.lr_scheduler.StepLR(optimizer, step_size=350, gamma=0.1)
+
+        sigma0=5/0.8
+        sigma=sigma0
+
+        for epoch in range(pre_train_iter):
+            if (epoch%50==0 and epoch<450):
+                #entrainement sur des images floutées pour augmenter la zone d'information, on réduit le floutage toutes les 50 époques
+                sigma=sigma*0.8
+                I_0blr=F.gaussian_blur(I_0_torch.unsqueeze(0), kernel_size=21, sigma=sigma).squeeze(0)
+                I_tblr=F.gaussian_blur(I_t_torch.unsqueeze(0), kernel_size=21, sigma=sigma).squeeze(0)
+                dic_model=DIC(I_0blr, I_tblr, train_set, liste)
+            
+
+
+
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                      " Loss: ", self.J_train.item())
+            #if self.J_train.item()<0.53 :
+                #break
+            scheduler.step()#self.J_train.item())
+            print(scheduler.get_last_lr())
+
+        """
+        optimizer = torch.optim.LBFGS(self.model_u.parameters(), lr=1, line_search_fn="strong_wolfe",max_iter=5)
+        self.optim = 'LFBGS'
+
+        
+
+        for epoch in range(1) : 
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("LFBGS ",epoch, "Loss: ", self.J_train.item())
+        """
+        dic_model=DIC(I_0_torch, I_t_torch, train_set, liste)
+        self.gradient_descent_u(J, optimizer, inputs, dic_model)
+        print(" Loss: ", self.J_train.item())
+
+
+
+
+    def pretrain_u(self, inputs, dic_model, pre_train_iter=100, lr=1e-4):
+        '''             
+        Supervised learning for u
+        '''
+        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0}
+
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs'] == np.inf:
+            self.normalized_losses['obs'] = Mechanics_model.J_obs(self, dic_model).detach().clone()
+
+
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                    Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0))
+
+            
+        optimizer = torch.optim.Adam(self.model_u.parameters(), lr=lr,betas=(0.9, 0.99))
+        self.optim = 'Adam'
+        scheduler=CosineAnnealingLR(optimizer, T_max=500, eta_min=1e-7)#ReduceLROnPlateau(optimizer, factor=0.5, patience=3,min_lr=1e-6)
+
+            
+
+        for epoch in range(pre_train_iter):
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                    " Loss: ", self.J_train.item())
+                #if self.J_train.item()<0.53 :
+                    #break
+            scheduler.step(self.J_train.item())
+
+        """
+        #seconde optimisation fine pour la frontière avec le composite
+
+        optimizer = torch.optim.LBFGS(self.model_u.parameters(), lr=0.1, max_iter=20, line_search_fn="strong_wolfe")
+        self.optim = 'LBFGS'
+        
+        for E in range(100) : 
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("LFBGS ",E, "Loss: ", self.J_train.item())
+                
+        """
+       
+
+    
+    #=======================TENTATIVE DE PRETRAIN DU E==================================
+
+    def pretrain_E(self, inputs, dic_model, pre_train_iter=100, 
+               lambdas={'obs_F_u': 1, 'constitutive': 1}):
+        """
+        Pretrain the material parameters E using physics-only losses
+        (residual + constitutive).
+        """
+
+        self.lambdas = lambdas
+
+        #J_res does not depend on E
+        # Normalization of losses 
+        #if self.normalized_losses['res'] == np.inf:
+        #    self.normalized_losses['res'] = Mechanics_model.J_res(
+        #        self, inputs.train, is_sigma_trained=True).detach().clone()
+
+        if self.normalized_losses['obs_F_u'] == np.inf:
+            self.normalized_losses['obs_F_u'] = Mechanics_model.J_obs_F_u(
+                self, inputs,dic_model).detach().clone()
+
+        if self.normalized_losses['constitutive'] == np.inf:
+            self.normalized_losses['constitutive'] = Mechanics_model.J_constitutive(
+                self, inputs.train, inputs, dic_model, is_sigma_trained=True).detach().clone()
+
+        # Loss function for E pretraining
+        def J(metamodel, domain, inputs, dic_model=dic_model):
+            return (torch.tensor(0),#metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] *Mechanics_model.J_res(metamodel, domain, is_sigma_trained=True),
+
+                    torch.tensor(0),   # obs (only for u)
+                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *Mechanics_model.J_obs_F_u(self, inputs,dic_model),   # obs_F (only for sigma)
+                    torch.tensor(0),   # BC (not needed for E pretraining)
+                    metamodel.lambdas['constitutive'] * 
+                    1/metamodel.normalized_losses['constitutive'] *
+                    Mechanics_model.J_constitutive(metamodel, inputs.train, 
+                                                inputs, dic_model, 
+                                                is_sigma_trained=True),
+                    torch.tensor(0),
+                    torch.tensor(0),   # obs (only for u)
+                    torch.tensor(0))
+
+        # Optimizer: only parameters of model_E 
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
+
+        # Training loop
+        for epoch in range(pre_train_iter):
+            self.gradient_descent(J, optimizer, inputs, obs=self.obs)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                    " Loss: ", self.J_train.item())
+
+        self.is_E_trained = True
+
+
+    def pretrain_E_lin(self, inputs, dic_model, pre_train_iter=100, Emin=3000, Emax=60000):
+        """
+        On apprends un E linéaire entre le blanc et le noir
+        """
+        #fonction cible linéaire
+        f_E=torch.flip(torch.linspace(Emin,Emax,256),dims=[0])
+
+        # Optimizer: only parameters of model_E 
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-2)
+        self.optim = 'Adam'
+
+             
+        #descente de gradient simple
+        for epoch in range(pre_train_iter):
+        
+            optimizer.zero_grad()
+            gl_random = 255 * torch.rand_like(inputs).long()
+            loss = Mechanics_model.J_E_obs(self, gl_random, dic_model, f_E)
+            loss.backward()
+            optimizer.step()
+        
+            print(f"Epoch {epoch:4d} | Loss: {loss.item():.6f}")
+
+        self.is_E_trained = True
+                
+
+    """
+    def pretrain_E(self, inputs, dic_model, pre_train_iter=100):
+        ''' 
+        Supervised learning for E
+        '''
+        self.lambdas = {'res': 0, 'obs': 1, 'obs_F': 0,
+                        'BC': 0, 'lines': 0, 'constitutive': 0}
+    
+        # Normalization of losses if not already done
+        if self.normalized_losses['obs_F'] == np.inf:
+            self.normalized_losses['obs_F'] = Mechanics_model.J_obs_F(self, dic_model).detach().clone()
+                
+        def J(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *
+                    Mechanics_model.J_obs(metamodel, dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    torch.tensor(0),                       
+                    torch.tensor(0.))
+
+        optimizer = torch.optim.Adam(self.model_E.parameters(), lr=1e-3)
+        self.optim = 'Adam'
+
+        for epoch in range(pre_train_iter):
+            self.gradient_descent_u(J, optimizer, inputs, dic_model)
+            if self.verbose == 1:
+                print("Epoch: ", epoch+1, "/", pre_train_iter,
+                    " Loss: ", self.J_train.item())
+    """
+
+    def train_model(self, inputs, dic_model, alter_steps=10,
+                    alter_freq=(50, 50, 50),
+                    lambdas_identif_E={'res': 0, 'obs': 0, 'obs_F_u': 1,
+                                       'BC': 0, 'obs_F_sigma': 0, 'constitutive': 1,'obs_F_DIC':0,'res_u':0},
+                    lambdas_update_sigma={
+                        'res': 0.1, 'obs': 0, 'obs_F_u': 0, 'BC': 0.1, 'obs_F_sigma': 1, 'constitutive': 10,'obs_F_DIC':0,'res_u':0},
+                    lambdas_update_u={'res': 0, 'obs': 1, 'obs_F_u': 0, 'BC': 0, 'obs_F_sigma': 0, 'constitutive': 10,'obs_F_DIC':0,'res_u':0}):
+        """
+        Method used for training the model.
+        """
+        print("dans train model")
+        print(inputs.train.shape)
+
+        # Normalization of losses if not done already
+        if self.normalized_losses['res'] == np.inf:
+            self.normalized_losses['res'] = Mechanics_model.J_res(
+                self, inputs.train, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['BC'] == np.inf:
+            self.normalized_losses['BC'] = Mechanics_model.J_BC(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['constitutive'] == np.inf:
+            self.normalized_losses['constitutive'] = Mechanics_model.J_constitutive(
+                self, inputs.train, inputs, dic_model, is_sigma_trained=self.is_sigma_trained).detach().clone()
+        if self.normalized_losses['obs'] == np.inf:
+            self.normalized_losses['obs'] = Mechanics_model.J_obs(
+                self, dic_model).detach().clone()
+        if self.normalized_losses['obs_F_u'] == np.inf:
+            self.normalized_losses['obs_F_u'] = Mechanics_model.J_obs_F_u(
+                self, inputs,dic_model).detach().clone()
+        if self.normalized_losses['obs_F_sigma'] == np.inf:
+            self.normalized_losses['obs_F_sigma'] = Mechanics_model.J_obs_F_sigma(
+                self, inputs, is_sigma_trained=self.is_sigma_trained).detach().clone()
+
+
+        def J_update_u(metamodel, domain, inputs, dic_model):
+            return (torch.tensor(0.),
+                    metamodel.lambdas['obs'] * 1/metamodel.normalized_losses['obs'] *Mechanics_model.J_obs(metamodel, dic_model),
+                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *Mechanics_model.J_obs_F_u(self, inputs,dic_model),
+                    torch.tensor(0.),
+                    torch.tensor(0.),
+                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *Mechanics_model.J_constitutive(metamodel, domain, inputs, dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
+
+
+        def J_update_sigma(metamodel, domain, inputs):
+            return (metamodel.lambdas['res'] * 1/metamodel.normalized_losses['res'] * Mechanics_model.J_res(metamodel, inputs.train, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.),
+                    metamodel.lambdas['BC'] * 1/metamodel.normalized_losses['BC'] *
+                    Mechanics_model.J_BC(
+                        metamodel, inputs, is_sigma_trained=True),
+                    metamodel.lambdas['obs_F_sigma'] * 1/metamodel.normalized_losses['obs_F_sigma'] *
+                    Mechanics_model.J_obs_F_sigma(
+                        self, inputs, is_sigma_trained=self.is_sigma_trained),
+                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
+                    Mechanics_model.J_constitutive(
+                        metamodel, domain, inputs , dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
+
+
+        def J_identif_E(metamodel, domain, inputs):
+            return (torch.tensor(0),
+                    torch.tensor(0),
+                    metamodel.lambdas['obs_F_u'] * 1/metamodel.normalized_losses['obs_F_u'] *
+                    Mechanics_model.J_obs_F_u(self, inputs,dic_model),
+                    torch.tensor(0),
+                    torch.tensor(0),
+                    metamodel.lambdas['constitutive'] * 1/metamodel.normalized_losses['constitutive'] *
+                    Mechanics_model.J_constitutive(
+                        metamodel, domain, inputs, dic_model, is_sigma_trained=True),
+                    torch.tensor(0.),
+                    torch.tensor(0.),
+                    torch.tensor(0.))
+
+
+        # Alternating minimization
+        self.best_rmse = float('inf')
+        self.best_ite = 0
+        self.iter_early_stopping = 0
+
+
+        self.list_E_matrix.append(self.E.detach().clone())
+        old_J = float("inf")
+
+
+        for self.alter_step in range(alter_steps):
+            print('ITERATION n°%d' % self.alter_step)
+            # Minimizing on E
+            self.lambdas = lambdas_identif_E
+
+            
+            optimizer = torch.optim.Adam(self.model_E.parameters()) #on optimise les paramètres du PINN
+            self.optim = 'Adam'
+            self.gradient_descent_E(J_identif_E, optimizer, inputs, dic_model) #on met le modèle des niveaux de gris
+            #self.gradient_descent(J_identif_E, optimizer, inputs)
+            print( " Loss: ", self.J_train.item())
+
+            """
+            for epoch in range(alter_freq[0]//2): #à laisser ou pas ? semble pas bcp diminuer la loss
+                
+                print("Epoch: ", epoch+1, "/",
+                      alter_freq[0]//2, " Loss: ", self.J_train.item())
+            
+
+            optimizer = torch.optim.LBFGS(self.model_E.parameters(), #on optimise les paramètres du PINN
+                                          lr=1,
+                                          max_iter=alter_freq[0]//2 - 1,
+                                          max_eval=10*alter_freq[0]//2,
+                                          line_search_fn="strong_wolfe",
+                                          tolerance_grad=-1,
+                                          tolerance_change=-1)
+            self.optim = 'LBFGS'
+            self.gradient_descent(J_identif_E, optimizer, inputs)
+            """
+
+            print("Saving E ")
+            self.list_E_matrix.append(self.E.detach().clone())
+            
+            display.display_E(self, inputs, dic_model)#, display_mesh=False)
+
+
+            # Minimizing on sigma
+            self.lambdas = lambdas_update_sigma
+            iter_theta = 0
+            optimizer = torch.optim.LBFGS(self.model_sigma.parameters(),
+                                          # list(self.model_u.parameters()) + list(self.model_sigma.parameters())
+                                          lr=1,
+                                          max_iter=alter_freq[2],
+                                          max_eval=10*alter_freq[2],
+                                          line_search_fn="strong_wolfe",
+                                          tolerance_grad=-1,
+                                          tolerance_change=-1)
+            self.optim = 'LBFGS'
+            self.gradient_descent(J_update_sigma, optimizer, inputs,obs=self.obs)
+            iter_theta += 1
+
+
+            self.alter_iter += 1
+            self.iter_early_stopping += 1
+
+
+            # Minimizing on u
+            self.lambdas = lambdas_update_u
+            iter_theta = 0
+            optimizer = torch.optim.Adam(self.model_u.parameters(), lr=1e-4)
+            self.optim = 'Adam'
+            self.gradient_descent_u(J_update_u, optimizer, inputs, dic_model)
+            
+            # optimizer = torch.optim.LBFGS(self.model_u.parameters(),
+            #                               # list(self.model_u.parameters()) + list(self.model_sigma.parameters())
+            #                               lr=1,
+            #                               max_iter=alter_freq[3],
+            #                               max_eval=10*alter_freq[3],
+            #                               line_search_fn="strong_wolfe",
+            #                               tolerance_grad=-1,
+            #                               tolerance_change=-1)
+            # self.optim = 'LBFGS'
+            # self.gradient_descent_u(J_update_u, optimizer, inputs, dic_model)
+            iter_theta += 1
+
+
+            self.alter_iter += 1
+            self.iter_early_stopping += 1
+
+
+            # Early stopping
+            if self.iter_early_stopping == 100:
+                print("Early stopping at altern step", self.alter_step + 1)
+                break
+
+
+            # display.display_sigma(self, inputs, 50.)
+            # display.display_epsilon(self, inputs)
+            # display.display_u(self, inputs, obs, display_error=True)
+
+
+        self.end_training = True
+
+
+        if self.optim == "LBFGS":
+            self.list_iter_flag.append(True)
+
+
+    def gradient_descent_u(self, J, optimizer, inputs, dic_model):
+        """
+        Gradient descent method used during the training for updating parameters. 
+        """
+
+
+        def closure():
+            optimizer.zero_grad()
+
+
+            self.J_train = J(self, inputs.train, inputs, dic_model)
+            self.J_res_train = torch.tensor([0])
+            self.J_obs_train = self.J_train[1]
+            self.J_obs_F_u_train = self.J_train[2]
+            self.J_BC_train = torch.tensor([0])
+            self.J_obs_F_sigma_train = torch.tensor([0]) #pourquoi tensor ici et 
+            self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=self.J_train[6]
+            self.J_res_u=self.J_train[7]
+            self.J_constitutive_E = torch.tensor([0])
+            #self.J_obs_F_E_train=self.J_train[6]
+            self.J_train = sum(self.J_train)
+            self.J_train.backward(retain_graph=True)
+            
+
+
+            # Clipping the gradient to avoid diverging during the training
+            nn.utils.clip_grad_norm_(
+                self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
+
+
+            # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
+            with torch.no_grad():
+                self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+                # print('E clamped')
+
+
+            self.iter_eval += 1
+
+
+            with torch.no_grad():
+                self.update_lists(inputs, optimizer)
+                self.iter += 1
+            return self.J_train
+
+
+        optimizer.step(closure)
+
+    def gradient_descent_E(self, J, optimizer, inputs, dic_model):
+        """
+        Gradient descent method used during the training for updating parameters. 
+        """
+
+        self.J_train = J(self, inputs.train, inputs)#,dic_model)
+
+
+        def closure():
+            optimizer.zero_grad()
+
+
+            self.J_train = J(self, inputs.train, inputs)#, dic_model)
+            self.J_res_train = torch.tensor([0])
+            self.J_obs_train = self.J_train[1]
+            self.J_obs_F_u_train = self.J_train[2]
+            self.J_BC_train = torch.tensor([0])
+            self.J_obs_F_sigma_train = self.J_train[4]
+            self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=torch.tensor([0])
+            self.J_res_u=torch.tensor([0])
+            self.J_constitutive_E = torch.tensor([0])
+            #self.J_obs_F_E_train=self.J_train[6]
+            self.J_train = sum(self.J_train)
+            self.J_train.backward(retain_graph=True)
+
+
+            # Clipping the gradient to avoid diverging during the training
+            nn.utils.clip_grad_norm_(
+                self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
+
+
+            # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
+            with torch.no_grad():
+                self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+                # print('E clamped')
+
+
+            self.iter_eval += 1
+
+
+            with torch.no_grad():
+                self.update_lists(inputs, optimizer)
+                self.iter += 1
+            return self.J_train
+
+
+        optimizer.step(closure)
+
+
+    def gradient_descent_sigma(self, J, optimizer, inputs,obs):
+        """
+        Gradient descent method used during the training for updating parameters. 
+        """
+
+
+        def closure():
+            optimizer.zero_grad()
+            self.J_train = J(self, inputs.train, inputs)
+            self.J_res_train = self.J_train[0]
+            self.J_obs_train = torch.tensor([0])
+            self.J_obs_F_u_train = self.J_train[2]
+            self.J_BC_train = self.J_train[3]
+            self.J_obs_F_sigma_train = self.J_train[4]
+            self.J_constitutive_train = torch.tensor([0])
+            self.J_obs_F_DIC=torch.tensor([0])
+            self.J_res_u=torch.tensor([0])
+            self.J_constitutive_E=self.J_train[8]
+            #self.J_obs_F_E_train=self.J_train[6]
+            self.J_train_tensor=torch.stack(list(self.J_train))
+            self.J_train = torch.sum(self.J_train_tensor)
+            self.J_train.backward(retain_graph=False)
+
+
+
+            # Clipping the gradient to avoid diverging during the training
+            nn.utils.clip_grad_norm_(
+                self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
+
+            
+
+            # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
+            #with torch.no_grad():
+            #    self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+             #   print('E clamped')
+              #  print(self.E)
+
+
+            self.iter_eval += 1
+
+
+            with torch.no_grad():
+                self.update_lists(inputs, optimizer)
+                self.iter += 1
+            return self.J_train
+
+ 
+        optimizer.step(closure)
+        
+    def gradient_descent(self, J, optimizer, inputs,obs):
+        """
+        Gradient descent method used during the training for updating parameters. 
+        """
+
+
+        def closure():
+            optimizer.zero_grad()
+            print(self.lambdas)
+            self.J_train = J(self, inputs.train, inputs)
+            self.J_res_train = self.J_train[0]
+            self.J_obs_train = torch.tensor([0])
+            self.J_obs_F_u_train = self.J_train[2]
+            self.J_BC_train = self.J_train[3]
+            self.J_obs_F_sigma_train = self.J_train[4]
+            self.J_constitutive_train = self.J_train[5]
+            self.J_obs_F_DIC=torch.tensor([0])
+            self.J_res_u=torch.tensor([0])
+            self.J_constitutive_E=torch.tensor([0])
+            #self.J_obs_F_E_train=self.J_train[6]
+            self.J_train_tensor=torch.stack(list(self.J_train))
+            self.J_train = torch.sum(self.J_train_tensor)
+            self.J_train.backward(retain_graph=False)
+
+
+
+            # Clipping the gradient to avoid diverging during the training
+            nn.utils.clip_grad_norm_(
+                self.model_u.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_sigma.parameters(), max_norm=1e3, norm_type=2.0)
+            nn.utils.clip_grad_norm_(
+                self.model_E.parameters(), max_norm=1e3, norm_type=2.0) #ajout pour E
+
+            
+
+            # Simple constraint to keep the physical parameter box-constrained
+            #A laisser ?
+            #with torch.no_grad():
+            #    self.E.clamp_(min=1e3/self.E_ref, max=5e4/self.E_ref)
+             #   print('E clamped')
+              #  print(self.E)
+
+
+            self.iter_eval += 1
+
+
+            with torch.no_grad():
+                self.update_lists(inputs, optimizer)
+                self.iter += 1
+            return self.J_train
+
+ 
+        optimizer.step(closure)
+
+
+    def update_lists(self, inputs, optimizer):
+        """
+        Method used for updating the model lists, to keep track of the values of interest during the training.
+        """
+
+
+        self.list_J_train.append([self.J_train.item(), self.J_res_train.item(),
+                                  self.J_obs_train.item(), self.J_obs_F_u_train.item(),
+                                  self.J_BC_train.item(), self.J_obs_F_sigma_train.item(),
+                                  self.J_constitutive_train.item(),self.J_obs_F_DIC.item(),
+                                  self.J_res_u.item(),self.J_constitutive_E.item()]) #ajout de self.J_obs_F_E_train.item()
+
+
+        self.J_train = self.J_train.detach().clone()
+        self.J_res_train = self.J_res_train.detach().clone()
+        self.J_obs_train = self.J_obs_train.detach().clone()
+        self.J_obs_F_u_train = self.J_obs_F_u_train.detach().clone()
+        self.J_BC_train = self.J_BC_train.detach().clone()
+        self.J_obs_F_sigma_train = self.J_obs_F_sigma_train.detach().clone()
+        self.J_constitutive_train = self.J_constitutive_train.detach().clone()
+        self.J_obs_F_DIC=self.J_obs_F_DIC.detach().clone()
+        self.J_res_u=self.J_res_u.detach().clone()
+        self.J_constitutive_E = self.J_constitutive_E.detach().clone()
+        #self.J_obs_F_E_train=self.J_obs_F_E_train.detach.clone() #ajout ici aussi
+
+        if self.optim == "LBFGS":
+            self.list_LBFGS_n_iter.append(
+                optimizer.state_dict()['state'][0]['n_iter'])
+
+
+            if self.end_training:
+                self.list_iter_flag.pop()
+                self.end_training = False
+
+
+            if (len(self.list_LBFGS_n_iter) > 1):
+                if (self.list_LBFGS_n_iter[-1] == self.list_LBFGS_n_iter[-2]):
+                    self.list_iter_flag.append(False)
+                else:
+                    self.list_iter_flag.append(True)
+                    self.iter += 1
+            else:
+                self.iter += 1
+
+
+            if (self.lambdas['res'] == 0):
+                self.list_res_optim.append(False)
+            else:
+                self.list_res_optim.append(True)
+
+
+        elif self.optim == 'Adam':
+            self.list_LBFGS_n_iter.append([1])
+            self.list_iter_flag.append(True)
+            self.iter += 1
+            if self.end_training:
+                print('!!!!! ATTENTION !!!!!!')
+                self.list_iter_flag.pop()
+                self.end_training = False
+                
+        elif self.optim == 'SGD':
+            self.list_LBFGS_n_iter.append([1])
+            self.list_iter_flag.append(True)
+            self.iter += 1
+            if self.end_training:
+                print('!!!!! ATTENTION !!!!!!')
+                self.list_iter_flag.pop()
+                self.end_training = False
+
+
+        else:
+            self.list_LBFGS_n_iter.append(
+                optimizer.state_dict()['state'][0]['n_iter'])
+
+
+            if self.end_training:
+                ('!!!!! ATTENTION !!!!!!')
+                self.list_iter_flag.pop()
+                self.end_training = False
+
+
+            if (len(self.list_LBFGS_n_iter) > 1):
+                if (self.list_LBFGS_n_iter[-1] == self.list_LBFGS_n_iter[-2]):
+                    self.list_iter_flag.append(False)
+                else:
+                    self.list_iter_flag.append(True)
+                    self.iter += 1
+            else:
+                self.iter += 1
+
+
+            if (self.lambdas['res'] == 0):
+                self.list_res_optim.append(False)
+            else:
+                self.list_res_optim.append(True)
